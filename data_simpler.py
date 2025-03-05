@@ -81,7 +81,7 @@ class ScheduleOption:
         workloads: A mapping from resource name to a list of workload values
                    over the duration of the intervention. For example, if resource "c1"
                    is used only in the first period, it might be: {"c1": [14, 0, 0]}.
-        risks: A list (over the intervention's relative periods) where each element is a 
+        risks: A list (over the intervention's timesteps) where each element is a 
                list of risk values—one per scenario—for that period.
                For example: [[4,8,2], [0,0], [0,0,0]].
     """
@@ -99,7 +99,7 @@ class ScheduleOption:
             )
         else:
             workloads_str = "None"
-        # Create a summary string for the risk profiles per relative period.
+        # Create a summary string for the risk profiles per timestep.
         if self.risks:
             risks_str = "\n    ".join(
                 f"Relative period {i+1}: {r} ({compute_stats(r)})" 
@@ -240,7 +240,7 @@ class MaintenanceSchedulingInstance:
                         print(f"{pad}          Risks:")
                         if option.risks:
                             for i, risk_list in enumerate(option.risks):
-                                print(f"{pad}            Relative period {i+1}: {trim_list(risk_list)}")
+                                print(f"{pad}            Timestep {i+1}: {trim_list(risk_list)}")
                         else:
                             print(f"{pad}            None")
                 else:
@@ -318,21 +318,21 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
       "Scenarios_number" ⟶ MaintenanceSchedulingInstance.scenarios_number
       "Resources"        ⟶ Resources -> Resource objects
       "Seasons"          ⟶ Seasons -> Season objects
-      "Interventions"    ⟶ Interventions -> Intervention objects with ScheduleOption(s)
+      "Interventions"    ⟶ Intervention objects with ScheduleOption(s)
          • "tmax"       ⟶ Intervention.tmax
-         • "Delta"      ⟶ For each option, ScheduleOption.duration (with start_time = index)
-         • "workload"   ⟶ ScheduleOption.workloads (flatten dict of dict to list)
-         • "risk"       ⟶ ScheduleOption.risks (flatten dict of dict to list of lists)
-      "Exclusions"       ⟶ Exclusion objects (last element is season, preceding elements are interventions)
-    
-    Any errors encountered during loading are caught and skipped.
+         • "Delta"      ⟶ For each option, ScheduleOption.duration (with start_time given by the option index, 1-indexed)
+         • "workload"   ⟶ ScheduleOption.workloads: For each resource, create a list of length T. For each absolute timestep (1 to T),
+                              if the JSON specifies a workload for that timestep for the current option's start time, use it;
+                              otherwise, leave it as zero.
+         • "risk"       ⟶ ScheduleOption.risks: For each absolute timestep (1 to T), if the JSON specifies risks for that timestep
+                              for the current option's start time, use that list; otherwise, use an empty list.
+      "Exclusions"       ⟶ Exclusion objects (last element is the season, preceding elements are interventions)
     """
     try:
         T = json_data["T"]
         scenarios_number = json_data["Scenarios_number"]
     except Exception as e:
         print(f"Error reading instance horizon or scenarios: {e}")
-        # If these critical fields are missing, we create a default instance.
         T = 0
         scenarios_number = []
     instance = MaintenanceSchedulingInstance(T=T, scenarios_number=scenarios_number)
@@ -376,29 +376,38 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         workload_data = intv_data.get("workload", {})
         risk_data = intv_data.get("risk", {})
         
-        # Iterate over each possible start time (using 1-indexing).
+        # Iterate over each possible start time option (using 1-indexing).
         for i, duration in enumerate(delta_list, start=1):
             try:
                 option_workloads = {}
                 for res_name, res_workload in workload_data.items():
-                    if str(i) in res_workload:
-                        rel_workload_dict = res_workload[str(i)]
-                        sorted_keys = sorted(rel_workload_dict, key=lambda k: int(k))
-                        workload_list = [rel_workload_dict[k] for k in sorted_keys]
-                        option_workloads[res_name] = workload_list
+                    # Initialize a list of zeros for absolute timesteps 1..T.
+                    workload_list = [0] * instance.T
+                    # For each absolute timestep from 1 to T:
+                    for t in range(1, instance.T + 1):
+                        # Check if this timestep is specified in the JSON.
+                        if str(t) in res_workload:
+                            inner_mapping = res_workload[str(t)]
+                            # If the workload for this option's start time is provided, assign it.
+                            if str(i) in inner_mapping:
+                                workload_list[t - 1] = inner_mapping[str(i)]
+                    option_workloads[res_name] = workload_list
             except Exception as e:
                 print(f"Error loading workload for intervention '{intv_name}', option {i}: {e}")
-                continue  # Skip this option if workload fails.
+                continue  # Skip this option if workload processing fails.
+            
             try:
-                option_risks = []
-                if str(i) in risk_data:
-                    risk_option = risk_data[str(i)]
-                    sorted_keys = sorted(risk_option, key=lambda k: int(k))
-                    for key in sorted_keys:
-                        option_risks.append(risk_option[key])
+                # Initialize risks as a list of empty lists (one per absolute timestep).
+                option_risks = [ [] for _ in range(instance.T) ]
+                for t in range(1, instance.T + 1):
+                    if str(t) in risk_data:
+                        inner_mapping = risk_data[str(t)]
+                        if str(i) in inner_mapping:
+                            option_risks[t - 1] = inner_mapping[str(i)]
             except Exception as e:
                 print(f"Error loading risk for intervention '{intv_name}', option {i}: {e}")
-                continue  # Skip this option if risk fails.
+                continue  # Skip this option if risk processing fails.
+            
             try:
                 option = ScheduleOption(
                     start_time=i,
@@ -434,20 +443,20 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
     
     return instance
 
+    return instance
+
 # ---------------------------
 # Example usage:
 # ---------------------------
 if __name__ == "__main__":
-    # Load Json
-    # json_path = ...
-    # with open(json_path, "r") as f:
-    #     data = json.load(f)
-    
-    #! Mi solución está confundiendo el timestep con el start time, conmuta? Creo que no.
+    #Load Json
+    json_path = 'challenge-roadef-2020/example1.json'
+    with open(json_path, "r") as f:
+        data = json.load(f)
 
     # Example JSON (could be loaded from a file) in the original format:
     example_json = {
-        "T": 3,
+        "T": 7,
         "Scenarios_number": [3, 2, 3], # Numero de escenarios para cada t, lista de longitud T
         "Resources": {
             "c1": {
@@ -466,15 +475,15 @@ if __name__ == "__main__":
                 "Delta": [3, 3, 2], #Duration depending on the start time.
                 "workload": {
                     "c1": {
-                        "1": {"1": 14, "2": 0, "3": 0}, #tstep: {st : workload needed of that resource}
-                        "2": {"1": 0, "2": 14, "3": 0},
-                        "3": {"1": 0, "2": 0, "3": 14}
+                        "2": {"1": 14, "2": 0, "3": 1}, #tstep: {st : workload needed of that resource}
+                        "3": {"1": 0, "2": 14, "3": 1},
+                        "4": {"1": 0, "2": 0, "3": 14}
                     }
                 }, 
                 "risk": {
-                    "1": {"1": [4, 8, 2], "2": [0, 0, 0]}, #tstep:{st : risk for each scenario (list of length scenario number for that timestep)}
-                    "2": {"1": [0, 0], "2": [3, 8]},
-                    "3": {"1": [0, 0, 0], "2": [0, 0, 0]}
+                    "2": {"1": [4, 8, 2], "2": [0, 0, 0]}, #tstep:{st : risk for each scenario (list of length scenario number for that timestep)}
+                    "3": {"1": [0, 0], "2": [3, 8]},
+                    "4": {"1": [0, 0, 0], "2": [0, 0, 0]}
                 }
             }
         },
