@@ -443,7 +443,40 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
     
     return instance
 
-    return instance
+@dataclass
+class Solution:
+    """
+    Represents a solution to the maintenance scheduling problem.
+    
+    Attributes:
+        intervention_starts: Dictionary mapping intervention names to their start times
+    """
+    intervention_starts: Dict[str, int] = field(default_factory=dict)
+
+    def __init__(self, solution_path: str):
+        """
+        Initialize solution from a text file.
+        
+        Args:
+            solution_path: Path to solution file containing intervention start times
+        """
+        self.intervention_starts = {}
+        try:
+            with open(solution_path, 'r') as f:
+                # Skip first line which is empty
+                next(f)
+                for line in f:
+                    if line.strip():
+                        intervention, start_time = line.strip().split()
+                        # Remove 'Intervention_' prefix if present
+                        intervention = intervention.replace('Intervention_', 'I')
+                        self.intervention_starts[intervention] = int(start_time)
+        except Exception as e:
+            print(f"Error loading solution from {solution_path}: {e}")
+
+    def __str__(self) -> str:
+        return "\n".join(f"{k}: {v}" for k,v in self.intervention_starts.items())
+
 
 # ---------------------------
 # Example usage:
@@ -498,3 +531,9 @@ if __name__ == "__main__":
     # Print the instance with detailed metrics.
     #print(instance)
     instance.show()
+
+    # Test loading solution from file
+    solution_path = 'Decision Matrix/Alternatives/1/solution_C_01_900.txt'
+    
+    print(Solution(solution_path))
+
