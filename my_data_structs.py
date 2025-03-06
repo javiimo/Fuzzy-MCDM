@@ -443,10 +443,11 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         _intv_counter += 1
         print(f"Loading intervention {_intv_counter} of {_total_interventions}: {intv_name}")
         try:
-            tmax = intv_data["tmax"]
+            tmax = int(intv_data["tmax"])
         except Exception as e:
             print(f"Error loading tmax for intervention '{intv_name}': {e}")
             continue
+        
         try:
             intervention = Intervention(name=intv_name, tmax=tmax)
         except Exception as e:
