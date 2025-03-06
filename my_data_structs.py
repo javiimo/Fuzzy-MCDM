@@ -399,9 +399,15 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         T = 0
         scenarios_number = []
     instance = MaintenanceSchedulingInstance(T=T, scenarios_number=scenarios_number)
+    print("Starting to load instance from JSON with T =", T, "and scenarios_number =", scenarios_number)
     
     # Load Resources.
+    print("Loading Resources...")
+    _total_resources = len(json_data.get("Resources", {}))
+    _res_counter = 0
     for res_name, res_data in json_data.get("Resources", {}).items():
+        _res_counter += 1
+        print(f"Loading resource {_res_counter} of {_total_resources}: {res_name}")
         try:
             resource = Resource(
                 name=res_name,
@@ -412,18 +418,30 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         except Exception as e:
             print(f"Error loading resource '{res_name}': {e}")
             continue
+    print("Finished loading Resources.")
     
     # Load Seasons.
+    print("Loading Seasons...")
+    _total_seasons = len(json_data.get("Seasons", {}))
+    _season_counter = 0
     for season_name, periods in json_data.get("Seasons", {}).items():
+        _season_counter += 1
+        print(f"Loading season {_season_counter} of {_total_seasons}: {season_name}")
         try:
             season = Season(name=season_name, periods=periods)
             instance.add_season(season)
         except Exception as e:
             print(f"Error loading season '{season_name}': {e}")
             continue
+    print("Finished loading Seasons.")
     
     # Load Interventions.
+    print("Loading Interventions...")
+    _total_interventions = len(json_data.get("Interventions", {}))
+    _intv_counter = 0
     for intv_name, intv_data in json_data.get("Interventions", {}).items():
+        _intv_counter += 1
+        print(f"Loading intervention {_intv_counter} of {_total_interventions}: {intv_name}")
         try:
             tmax = intv_data["tmax"]
         except Exception as e:
@@ -439,8 +457,12 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         workload_data = intv_data.get("workload", {})
         risk_data = intv_data.get("risk", {})
         
+        _total_options = len(delta_list)
+        _option_counter = 0
         # Iterate over each possible start time option (using 1-indexing).
         for i, duration in enumerate(delta_list, start=1):
+            _option_counter += 1
+            print(f"Loading option {_option_counter} of {_total_options} for intervention {intv_name}")
             try:
                 option_workloads = {}
                 for res_name, res_workload in workload_data.items():
@@ -482,7 +504,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
             except Exception as e:
                 print(f"Error adding schedule option for intervention '{intv_name}', option {i}: {e}")
                 continue
-        
+        print(f"Finished loading options for intervention {intv_name}.")
         #Compute the overall mean risks list once all options are added
         intervention.compute_overall_mean_risk()
 
@@ -491,9 +513,15 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         except Exception as e:
             print(f"Error adding intervention '{intv_name}': {e}")
             continue
+    print("Finished loading Interventions.")
     
     # Load Exclusions.
+    print("Loading Exclusions...")
+    _total_exclusions = len(json_data.get("Exclusions", {}))
+    _excl_counter = 0
     for excl_key, excl_list in json_data.get("Exclusions", {}).items():
+        _excl_counter += 1
+        print(f"Loading exclusion {_excl_counter} of {_total_exclusions}: {excl_key}")
         try:
             if excl_list:
                 season = excl_list[-1]
@@ -506,8 +534,11 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         except Exception as e:
             print(f"Error loading exclusion '{excl_key}': {e}")
             continue
+    print("Finished loading Exclusions.")
     
+    print("Finished loading instance.")
     return instance
+
 
 @dataclass
 class Solution:
