@@ -106,23 +106,28 @@ class ScheduleOption:
 
 
     def __str__(self) -> str:
-        # Create a summary string for each resource's workload.
+        # Format workloads using compute_stats (assumed to be defined elsewhere).
         if self.workloads:
             workloads_str = "\n    ".join(
-                f"{res}: {vals} ({compute_stats(vals)})" 
+                f"{res}: {vals} ({compute_stats(vals)})"
                 for res, vals in self.workloads.items()
             )
         else:
             workloads_str = "None"
-        # Create a summary string for the risk profiles per timestep.
+        # Format the risk profiles per timestep.
         if self.risks:
             risks_str = "\n    ".join(
-                f"Relative period {i+1}: {r} ({compute_stats(r)})" 
+                f"Relative period {i+1}: {r} ({compute_stats(r)})"
                 for i, r in enumerate(self.risks)
             )
         else:
             risks_str = "None"
-        return (f"Schedule Option (start_time={self.start_time}, duration={self.duration}, mean_risk={self.mean_risk:.2f}):\n"
+        # Properly format the mean_risk list.
+        mean_risk_str = (
+            "[" + ", ".join(f"{mr:.2f}" for mr in self.mean_risk) + "]"
+            if self.mean_risk else "[]"
+        )
+        return (f"Schedule Option (start_time={self.start_time}, duration={self.duration}, mean_risk={mean_risk_str}):\n"
                 f"  Workloads:\n    {workloads_str}\n"
                 f"  Risks:\n    {risks_str}")
 
@@ -135,7 +140,7 @@ class Intervention:
         name: Unique identifier for the intervention.
         tmax: The last period at which the intervention may start so that it finishes on time.
         options: A list of possible scheduling options for the intervention.
-        overall_mean_risk: A list of mean risk values calculated for each timestep across all options.
+        overall_mean_risk: A list of mean risk values calculated for each timestep across all options (i.e. across all start times).
     """
     name: str
     tmax: int
@@ -178,12 +183,25 @@ class Intervention:
         return self.overall_mean_risk
 
     def __str__(self) -> str:
-        if self.options:
-            options_str = "\n  ".join(str(opt) for opt in self.options)
-        else:
-            options_str = "None"
-        return (f"Intervention '{self.name}': tmax = {self.tmax}, {len(self.options)} option(s), \n overall_mean_risk = {self.overall_mean_risk}\n\n Schedule Options:\n"
-                f"  {options_str}")
+        # Compute overall_mean_risk if it hasn't been computed yet.
+        if not self.overall_mean_risk and self.options:
+            self.compute_overall_mean_risk()
+        
+        overall_risk_str = (
+            "[" + ", ".join(f"{risk:.2f}" for risk in self.overall_mean_risk) + "]"
+            if self.overall_mean_risk else "Not computed"
+        )
+        
+        options_str = "\n  ".join(str(opt) for opt in self.options) if self.options else "None"
+        
+        return (
+            f"Intervention '{self.name}':\n"
+            f"  tmax = {self.tmax}\n"
+            f"  Options Count = {len(self.options)}\n"
+            f"  Overall Mean Risk = {overall_risk_str}\n"
+            f"  Schedule Options:\n  {options_str}"
+        )
+
 
 @dataclass
 class MaintenanceSchedulingInstance:
@@ -574,14 +592,15 @@ if __name__ == "__main__":
     }
     
     # Load instance from JSON.
-    instance = load_instance_from_json(example_json)
+    instance = load_instance_from_json(data)
     
     # Print the instance with detailed metrics.
-    #print(instance)
-    instance.show()
+    for int in instance.interventions.values():
+        print(int)
+    #instance.show()
 
     # Test loading solution from file
     solution_path = 'Decision Matrix/Alternatives/1/solution_C_01_900.txt'
     
-    print(Solution(solution_path))
+    #print(Solution(solution_path))
 
