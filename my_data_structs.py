@@ -84,11 +84,26 @@ class ScheduleOption:
         risks: A list (over the intervention's timesteps) where each element is a 
                list of risk values—one per scenario—for that period.
                For example: [[4,8,2], [0,0], [0,0,0]].
+        mean_risk: A list of mean risk values calculated for each timestep for THIS start time across all scenarios. 
+                   Only using non-zero risks.
     """
     start_time: int
     duration: int
     workloads: Dict[str, List[float]]
     risks: List[List[float]]
+    mean_risk: List[float] = field(default_factory=list)  # Default value as a list
+
+    def __post_init__(self):
+        if self.risks:
+            self.mean_risk = []
+            for timestep_risks in self.risks:
+                # Only consider non-zero risk values
+                non_zero_risks = [value for value in timestep_risks if value > 0]
+                total_risk = sum(non_zero_risks)
+                total_scenarios = len(non_zero_risks)
+                mean = total_risk / total_scenarios if total_scenarios > 0 else 0.0
+                self.mean_risk.append(mean)
+
 
     def __str__(self) -> str:
         # Create a summary string for each resource's workload.
@@ -107,7 +122,7 @@ class ScheduleOption:
             )
         else:
             risks_str = "None"
-        return (f"Schedule Option (start_time={self.start_time}, duration={self.duration}):\n"
+        return (f"Schedule Option (start_time={self.start_time}, duration={self.duration}, mean_risk={self.mean_risk:.2f}):\n"
                 f"  Workloads:\n    {workloads_str}\n"
                 f"  Risks:\n    {risks_str}")
 
@@ -120,10 +135,12 @@ class Intervention:
         name: Unique identifier for the intervention.
         tmax: The last period at which the intervention may start so that it finishes on time.
         options: A list of possible scheduling options for the intervention.
+        overall_mean_risk: A list of mean risk values calculated for each timestep across all options.
     """
     name: str
     tmax: int
     options: List[ScheduleOption] = field(default_factory=list)
+    overall_mean_risk: List[float] = field(init=False, default_factory=list)
     
     def add_option(self, option: ScheduleOption):
         if option.start_time > self.tmax:
@@ -131,13 +148,41 @@ class Intervention:
                 f"Option start time {option.start_time} exceeds tmax ({self.tmax}) for intervention {self.name}"
             )
         self.options.append(option)
+        # Update the overall_mean_risk after adding a new option.
+        #self.compute_overall_mean_risk() #Not efficient, compute it once everything is initialized.
+
+    def compute_overall_mean_risk(self) -> List[float]:
+        """
+        Computes the overall mean risk per timestep across all schedule options,
+        using only the mean risk values that are greater than 0.
+        """
+        if not self.options:
+            self.overall_mean_risk = []
+            return self.overall_mean_risk
+        
+        # Determine the maximum number of timesteps among all schedule options.
+        max_timesteps = max(len(opt.mean_risk) for opt in self.options)
+        overall_means = []
+        for t in range(max_timesteps):
+            # Gather all positive mean risk values from the t-th timestep of each option.
+            timestep_values = []
+            for opt in self.options:
+                if t < len(opt.mean_risk) and opt.mean_risk[t] > 0:
+                    timestep_values.append(opt.mean_risk[t])
+            # Compute average if there are any positive values; otherwise, default to 0.
+            if timestep_values:
+                overall_means.append(sum(timestep_values) / len(timestep_values))
+            else:
+                overall_means.append(0.0)
+        self.overall_mean_risk = overall_means
+        return self.overall_mean_risk
 
     def __str__(self) -> str:
         if self.options:
             options_str = "\n  ".join(str(opt) for opt in self.options)
         else:
             options_str = "None"
-        return (f"Intervention '{self.name}': tmax = {self.tmax}, {len(self.options)} option(s):\n"
+        return (f"Intervention '{self.name}': tmax = {self.tmax}, {len(self.options)} option(s), \n overall_mean_risk = {self.overall_mean_risk}\n\n Schedule Options:\n"
                 f"  {options_str}")
 
 @dataclass
@@ -420,6 +465,9 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
                 print(f"Error adding schedule option for intervention '{intv_name}', option {i}: {e}")
                 continue
         
+        #Compute the overall mean risks list once all options are added
+        intervention.compute_overall_mean_risk()
+
         try:
             instance.add_intervention(intervention)
         except Exception as e:
