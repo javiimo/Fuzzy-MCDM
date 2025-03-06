@@ -2,7 +2,7 @@ from my_data_structs import *
 import numpy as np
 
 
-def compute_risk_corr_np(risk1, risk2, alpha=1.0):
+def compute_risk_corr_np(risk1, risk2, alpha=1e-15):
     """
     Computes a modified correlation between two risk series that captures jump sizes.
     
@@ -11,7 +11,7 @@ def compute_risk_corr_np(risk1, risk2, alpha=1.0):
             diff1 = risk1[i+1] - risk1[i]
             diff2 = risk2[i+1] - risk2[i]
       - Compute a similarity measure based on the difference of jumps:
-            similarity = 1 / (1 + |diff1 - diff2|)
+            similarity = exp(-alfa|diff1 - diff2|)
       - Determine sign:
             sign = +1 if diff1 * diff2 >= 0, else -1
       - Contribution for this step:
@@ -30,7 +30,6 @@ def compute_risk_corr_np(risk1, risk2, alpha=1.0):
     diff1 = np.diff(risk1)
     diff2 = np.diff(risk2)
     
-    alpha = 1e-15
     # Similarity: the closer diff1 and diff2 are, the closer to 1 the similarity.
     similarity = np.exp(-alpha * np.abs(diff1 - diff2)) # values in (0,1]
     
@@ -84,7 +83,7 @@ def compute_distance_matrix(instance):
     """
     Computes a distance matrix from the normalized correlation matrix.
     Uses the transformation:
-         distance = sqrt((1 - normalized_correlation) / 2)
+         distance = sqrt((1 - normalized_correlation))
     to ensure the distances lie in [0, 1].
     
     Parameters:
@@ -96,13 +95,13 @@ def compute_distance_matrix(instance):
     """
     keys, norm_corr_matrix = compute_risk_corr_matrix(instance)
     #distance_matrix = np.sqrt((1 - norm_corr_matrix))
-    distance_matrix = (1 - norm_corr_matrix)**(1/1)
+    distance_matrix = (1 - norm_corr_matrix)
     
     mask = ~np.eye(distance_matrix.shape[0], dtype=bool)
     d_min = np.min(distance_matrix[mask])
     d_max = np.max(distance_matrix[mask])
     epsilon = 1e-6  # Small value to avoid zero distances
-    distance_matrix[mask] = epsilon + (1 - epsilon) * (distance_matrix[mask] - d_min) / (d_max - d_min)
+    distance_matrix[mask] =  epsilon + (1 - epsilon) * (distance_matrix[mask] - d_min) / (d_max - d_min)
     return keys, distance_matrix
 
 
@@ -110,7 +109,7 @@ def compute_distance_matrix(instance):
 import matplotlib.pyplot as plt
 from sklearn.manifold import MDS
 
-def recover_points_from_distance_matrix(distance_matrix, n_dimensions=2):
+def recover_points_MDS(distance_matrix, n_dimensions=2):
     """
     Recovers the original point coordinates from a distance matrix using Multidimensional Scaling (MDS).
     
@@ -184,7 +183,7 @@ if __name__ == "__main__":
     ####################################################
 
 
-    recovered_points = recover_points_from_distance_matrix(distance_matrix)
+    recovered_points = recover_points_MDS(distance_matrix)
 
     # Plot results
     plt.scatter(recovered_points[:, 0], recovered_points[:, 1], c='red', marker='o')
