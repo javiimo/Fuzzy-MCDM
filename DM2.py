@@ -8,11 +8,6 @@ from sklearn.decomposition import PCA
 import warnings
 warnings.simplefilter(action='ignore', category=UserWarning)
 
-
-
-
-
-
 # -------------------------------
 # Risk Correlation and Distance Computations
 # -------------------------------
@@ -131,18 +126,28 @@ def compute_distance_matrix(instance, alpha=1e-15, method="linear"):
     distance_matrix[mask] = epsilon + (1 - epsilon) * (distance_matrix[mask] - d_min) / (d_max - d_min)
     return keys, distance_matrix
 
-def compute_rmse(original_distance_matrix, embedded_points):
+def compute_weighted_stress(original_distance_matrix, embedded_points, weight_matrix):
     """
-    Computes RMSE between the original distance matrix and the distances in the embedding.
-    Also computes RMSE as percentage of the median original distance.
+    Computes the weighted stress between the original distance matrix and the distances
+    in the embedding. The stress is defined as the square root of:
+    
+        (sum_{i<j} w_{ij} (d_{ij} - d̂_{ij})²) / (sum_{i<j} w_{ij} d_{ij}²)
+    
+    where the weights w_{ij} are defined based on the absolute value of the correlation.
+    
+    Parameters:
+        original_distance_matrix (numpy.ndarray): The target distance matrix.
+        embedded_points (numpy.ndarray): The points in the embedding.
+        weight_matrix (numpy.ndarray): Matrix of weights (same shape as the distance matrix).
+        
+    Returns:
+        float: The computed weighted stress.
     """
     recovered_distance_matrix = pairwise_distances(embedded_points)
-    difference_matrix = original_distance_matrix - recovered_distance_matrix
-    rmse = np.sqrt(np.mean(difference_matrix ** 2))
-    mask = ~np.eye(original_distance_matrix.shape[0], dtype=bool)
-    median_distance = np.median(original_distance_matrix[mask])
-    rmse_percentage = (rmse / median_distance) * 100
-    return rmse, rmse_percentage
+    diff = original_distance_matrix - recovered_distance_matrix
+    numerator = np.sum(weight_matrix * (diff ** 2))
+    denominator = np.sum(weight_matrix * (original_distance_matrix ** 2))
+    return np.sqrt(numerator / denominator)
 
 # -------------------------------
 # Embedding Functions
@@ -163,13 +168,10 @@ def recover_points_TSNE(distance_matrix, n_dimensions=2):
     points = tsne.fit_transform(distance_matrix)
     return points
 
-
-
 def recover_points_UMAP(distance_matrix, n_dimensions=2):
     umap_embedder = UMAP(n_components=n_dimensions, metric="precomputed", random_state=42, verbose=False)
     points = umap_embedder.fit_transform(distance_matrix)
     return points
-
 
 def plot_embedding(points, title, keys=None):
     """
@@ -207,7 +209,6 @@ def high_dim_embedding_from_distance(dist_matrix, method="UMAP", high_dim=5):
     high_dim_points = embedder.fit_transform(dist_matrix)
     return high_dim_points
 
-
 def project_to_pca_plane(points, target_dim=2):
     """
     Performs PCA on the high-dimensional points and returns their projection on the best-fit target_dim plane.
@@ -225,7 +226,7 @@ def test_embeddings(instance, alpha_values, distance_methods, map_methods, high_
     Loops over different α values and distance transformation methods,
     and applies various embedding methods.
     
-    For each case, prints the RMSE and (if applicable) stress and plots the embedding.
+    For each case, prints the weighted stress and (if applicable) stress (for MDS) and plots the embedding.
     If an embedding method in map_methods starts with "PCA_", then it uses the corresponding
     high-dimensional embedding method followed by an orthogonal projection (via PCA) to 2D.
     
@@ -279,10 +280,10 @@ def test_embeddings(instance, alpha_values, distance_methods, map_methods, high_
                         high_dim_points = high_dim_embedding_from_distance(dist_matrix, method=underlying_method, high_dim=high_dim)
                         # Project onto the best-fit 2D plane via PCA (orthogonal projection)
                         points = project_to_pca_plane(high_dim_points, target_dim=2)
-                        # Compute quality metrics
-                        rmse, rmse_percentage = compute_rmse(dist_matrix, points)
+                        # Compute quality metric using weighted stress
+                        stress_val = compute_weighted_stress(dist_matrix, points, np.abs(corr_matrix))
                         if plot:
-                            print(f"RMSE: {rmse:.4f}, RMSE as % of median distance: {rmse_percentage:.2f}%")
+                            print(f"Weighted Stress: {stress_val:.4f}")
                             title = f"{emb_name} (α={alpha}, d_method={d_method}, high_dim={high_dim})"
                             plot_embedding(points, title, keys)
                         results.append({
@@ -290,9 +291,9 @@ def test_embeddings(instance, alpha_values, distance_methods, map_methods, high_
                             "distance_method": d_method,
                             "embedding": emb_name,
                             "high_dim": high_dim,
-                            "rmse": rmse,
-                            "rmse_percentage": rmse_percentage,
-                            "stress": None  # Not available for PCA projections
+                            "rmse": stress_val,
+                            "rmse_percentage": None,
+                            "stress": stress_val
                         })
                 else:
                     # Standard embedding method
@@ -308,25 +309,26 @@ def test_embeddings(instance, alpha_values, distance_methods, map_methods, high_
                     else:
                         points = emb_func(dist_matrix, n_dimensions=2)
                         stress = None
-                    rmse, rmse_percentage = compute_rmse(dist_matrix, points)
+                    # Compute quality metric using weighted stress
+                    stress_val = compute_weighted_stress(dist_matrix, points, np.abs(corr_matrix))
                     if plot:
-                        print(f"RMSE: {rmse:.4f}, RMSE as % of median distance: {rmse_percentage:.2f}%")
+                        print(f"Weighted Stress: {stress_val:.4f}")
                         title = f"{emb_name} (α={alpha}, d_method={d_method})"
                         plot_embedding(points, title, keys)
                     results.append({
                         "alpha": alpha,
                         "distance_method": d_method,
                         "embedding": emb_name,
-                        "rmse": rmse,
-                        "rmse_percentage": rmse_percentage,
-                        "stress": stress
+                        "rmse": stress_val,
+                        "rmse_percentage": None,
+                        "stress": stress_val
                     })
 
     if not plot:
-        # Sort results by RMSE percentage
+        # Sort results by weighted stress (stored under "rmse")
         sorted_results = sorted(results, key=lambda x: x['rmse'])
         print("\n=== TOP", top_n, "PERFORMING METHODS ===")
-        print("\nRanked by RMSE as percentage of median distance:")
+        print("\nRanked by Weighted Stress:")
         for i, result in enumerate(sorted_results[:top_n], 1):
             print(f"\n{i}. Configuration:")
             print(f"   Embedding Method: {result['embedding']}")
@@ -334,8 +336,7 @@ def test_embeddings(instance, alpha_values, distance_methods, map_methods, high_
                 print(f"   High Dimensions: {result['high_dim']}")
             print(f"   Distance Method: {result['distance_method']}")
             print(f"   Alpha: {result['alpha']}")
-            print(f"   RMSE: {result['rmse']:.4f}")
-            print(f"   RMSE Percentage: {result['rmse_percentage']:.2f}%")
+            print(f"   Weighted Stress: {result['rmse']:.4f}")
             if result['stress'] is not None:
                 print(f"   Stress: {result['stress']:.4f}")
             
@@ -384,8 +385,6 @@ def matrix_statistics(matrix):
     print("  % values >0.1 from median:", f"{percent_far_from_median:.1f}%")
     print("\n\n")
 
-
-
 if __name__ == "__main__":
     json_path = 'Decision Matrix\Problem setups\C_01.json'
     with open(json_path, "r") as f:
@@ -409,8 +408,8 @@ if __name__ == "__main__":
     ####################################################
     
     # Define the α values and distance transformation methods you want to test:
-    #alpha_values = np.logspace(-20, 3, 50)
-    alpha_values = np.linspace(0.0004119473684210526, 0.0004457894736842105, 30)
+    alpha_values = np.logspace(-20, 3, 50)
+    #alpha_values = np.linspace(0.0004119473684210526, 0.0004457894736842105, 30)
     #alpha_values = [0.0004457894736842105]
     distance_methods = [
                         "linear", 
@@ -424,8 +423,8 @@ if __name__ == "__main__":
                         "sine"
                         ]
     map_methods = [
-                    "MDS",
-                    #"Isomap",
+                    #"MDS",
+                    "Isomap",
                     #"TSNE",
                     #"UMAP",
                     #"PCA_UMAP", 

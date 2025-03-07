@@ -1,0 +1,93 @@
+MDS:
+=== TOP 5 PERFORMING METHODS ===
+
+Ranked by Weighted Stress:
+
+1. Configuration:
+   Embedding Method: MDS
+   Distance Method: arctan
+   Alpha: 1.2067926406393314e-06
+   Weighted Stress: 0.3748
+   Stress: 0.3748
+
+2. Configuration:
+   Embedding Method: MDS
+   Distance Method: sine
+   Alpha: 1.2067926406393314e-06
+   Weighted Stress: 0.3755
+   Stress: 0.3755
+
+3. Configuration:
+   Embedding Method: MDS
+   Distance Method: sine
+   Alpha: 4.094915062380436e-07
+   Weighted Stress: 0.3755
+   Stress: 0.3755
+
+4. Configuration:
+   Embedding Method: MDS
+   Distance Method: sine
+   Alpha: 1.3894954943731418e-07
+   Weighted Stress: 0.3755
+   Stress: 0.3755
+
+5. Configuration:
+   Embedding Method: MDS
+   Distance Method: sine
+   Alpha: 4.714866363457409e-08
+   Weighted Stress: 0.3756
+   Stress: 0.3756
+
+
+
+
+
+
+
+
+
+UMAP with PCA:
+=== TOP 5 PERFORMING METHODS ===                                                                                             
+
+Ranked by Weighted Stress:
+
+1. Configuration:
+   Embedding Method: PCA_UMAP
+   High Dimensions: 15
+   Distance Method: power2
+   Alpha: 4.498432668969453
+   Weighted Stress: 0.5224
+   Stress: 0.5224
+
+2. Configuration:
+   Embedding Method: PCA_UMAP
+   High Dimensions: 35
+   Distance Method: arctan
+   Alpha: 4.498432668969453
+   Weighted Stress: 0.5228
+   Stress: 0.5228
+
+3. Configuration:
+   Embedding Method: PCA_UMAP
+   High Dimensions: 35
+   Distance Method: sqrt
+   Alpha: 4.498432668969453
+   Weighted Stress: 0.5261
+   Stress: 0.5261
+
+4. Configuration:
+   Embedding Method: PCA_UMAP
+   High Dimensions: 35
+   Distance Method: logistic
+   Alpha: 4.498432668969453
+   Weighted Stress: 0.5264
+   Stress: 0.5264
+
+5. Configuration:
+   Embedding Method: PCA_UMAP
+   High Dimensions: 15
+   Distance Method: sine
+   Alpha: 4.498432668969453
+   Weighted Stress: 0.5277
+   Stress: 0.5277
+
