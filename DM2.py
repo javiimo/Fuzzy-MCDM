@@ -408,19 +408,19 @@ if __name__ == "__main__":
     ####################################################
     
     # Define the α values and distance transformation methods you want to test:
-    alpha_values = np.logspace(-20, 3, 50)
+    #alpha_values = np.logspace(-20, 3, 50)
     #alpha_values = np.linspace(0.0004119473684210526, 0.0004457894736842105, 30)
-    #alpha_values = [0.0004457894736842105]
+    alpha_values = [0.0023299518105153816]
     distance_methods = [
-                        "linear", 
-                        "sqrt", 
-                        "arccos",
-                        "logistic",
-                        "exponential", 
-                        "power2",
-                        "power1/3",
+                        #"linear", 
+                        #"sqrt", 
+                        #"arccos",
+                        #"logistic",
+                        #"exponential", 
+                        #"power2",
+                        #"power1/3",
                         "arctan",
-                        "sine"
+                        #"sine"
                         ]
     map_methods = [
                     #"MDS",
@@ -440,4 +440,4 @@ if __name__ == "__main__":
                 35]
     
     # Run tests (uncomment the following line once your instance is defined)
-    results = test_embeddings(instance, alpha_values, distance_methods, map_methods, high_dims, plot=False, top_n=5, mat_stats=True)
+    results = test_embeddings(instance, alpha_values, distance_methods, map_methods, high_dims, plot=True, top_n=5, mat_stats=True)
