@@ -1,0 +1,1 @@
+# Donwload france.json from https://gadm.org/download_country.html (level 1)

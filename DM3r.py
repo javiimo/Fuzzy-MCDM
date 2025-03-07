@@ -161,7 +161,7 @@ def recover_points_MDS_weighted(distance_matrix, weight_matrix, n_dimensions=2):
     
     # Retrieve the configuration (embedding) and the weighted stress from the result.
     conf = np.array(ro.r('result$conf'))
-    weighted_stress = float(ro.r('result$stress'))
+    weighted_stress = ro.r('result$stress')[0]  # Extract the first element to avoid deprecation warning
     
     return conf, weighted_stress
 
@@ -314,19 +314,20 @@ if __name__ == "__main__":
     matrix_statistics(distance_matrix)
     
     # Define the α values and distance transformation methods to test
-    #alpha_values = np.linspace(0.0004119473684210526, 0.0004457894736842105, 30)
-    alpha_values = np.logspace(-20, 3, 50)
+    alpha_values = [1.2067926406393314e-06]
+    #alpha_values = np.logspace(-10, -3, 10)
+    #alpha_values = np.linspace(1, 10, 10)
     distance_methods = [
         "linear", 
-        "sqrt", 
-        "arccos",
-        "logistic",
-        "exponential", 
-        "power2",
-        "power1/3",
-        "arctan",
-        "sine"
+        #"sqrt", 
+        #"arccos",
+        #"logistic",
+        #"exponential", 
+        #"power2",
+        #"power1/3",
+        #"arctan",
+        #"sine"
     ]
     
     # Run the testing function using weighted MDS (via R's SMACOF)
-    results = test_embeddings(instance, alpha_values, distance_methods, plot=False, top_n=5, mat_stats=True)
+    results = test_embeddings(instance, alpha_values, distance_methods, plot=True, top_n=5, mat_stats=True)

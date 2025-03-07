@@ -1,3 +1,44 @@
+Weighted SMACOF:
+Cuando paso de 1, me sale maravilloso pero pq ya me estoy yendo fuera de que la mediana es 0.99 y demás. Mejor probar solo con alfas menores que 1.
+=== TOP 5 PERFORMING CONFIGURATIONS ===
+
+Ranked by weighted stress:
+
+1. Configuration:
+   Embedding Method: Weighted MDS (SMACOF)
+   Distance Method: power1/3
+   Alpha: 1e-10
+   Weighted Stress: 0.3562
+
+2. Configuration:
+   Embedding Method: Weighted MDS (SMACOF)
+   Distance Method: power1/3
+   Alpha: 5.994842503189421e-10
+   Weighted Stress: 0.3562
+
+3. Configuration:
+   Embedding Method: Weighted MDS (SMACOF)
+   Distance Method: power1/3
+   Alpha: 3.5938136638046257e-09
+   Weighted Stress: 0.3562
+
+4. Configuration:
+   Embedding Method: Weighted MDS (SMACOF)
+   Distance Method: power1/3
+   Alpha: 2.1544346900318866e-08
+   Weighted Stress: 0.3562
+
+5. Configuration:
+   Embedding Method: Weighted MDS (SMACOF)
+   Distance Method: power1/3
+   Alpha: 1.2915496650148827e-07
+   Weighted Stress: 0.3562
+
+
+Comparando con arctan y el  mejor de MDS:
+Weighted Stress (SMACOF): 0.3572
+
+
 MDS:
 === TOP 5 PERFORMING METHODS ===
 
@@ -90,4 +131,46 @@ Ranked by Weighted Stress:
    Alpha: 4.498432668969453
    Weighted Stress: 0.5277
    Stress: 0.5277
+
+
+ISOMAP:
+=== TOP 5 PERFORMING METHODS ===                                                                                             
+
+Ranked by Weighted Stress:
+
+1. Configuration:
+   Embedding Method: Isomap
+   Distance Method: arctan
+   Alpha: 0.05963623316594661
+   Weighted Stress: 0.4358
+   Stress: 0.4358
+
+2. Configuration:
+   Embedding Method: Isomap
+   Distance Method: sine
+   Alpha: 0.05963623316594661
+   Weighted Stress: 0.4362
+   Stress: 0.4362
+
+3. Configuration:
+   Embedding Method: Isomap
+   Distance Method: power1/3
+   Alpha: 0.05963623316594661
+   Weighted Stress: 0.4362
+   Stress: 0.4362
+
+4. Configuration:
+   Embedding Method: Isomap
+   Distance Method: sqrt
+   Alpha: 0.05963623316594661
+   Weighted Stress: 0.4365
+   Stress: 0.4365
+
+5. Configuration:
+   Embedding Method: Isomap
+   Distance Method: arctan
+   Alpha: 0.0023299518105153816
+   Weighted Stress: 0.4368
+   Stress: 0.4368
+
 
