@@ -117,144 +117,193 @@ def compute_distance_matrix(instance, alpha=1e-4, method="linear"):
 # -------------------------------
 # Weighted Stress Computation
 # -------------------------------
-def compute_weighted_stress(original_distance_matrix, embedded_points, weight_matrix):
-    """
-    Computes the weighted stress between the original distance matrix and the distances
-    in the embedding. The stress is defined as the square root of:
-    
-        (sum_{i<j} w_{ij} (d_{ij} - d̂_{ij})²) / (sum_{i<j} w_{ij} d_{ij}²)
-    
-    where the weights w_{ij} are defined based on the absolute value of the correlation.
-    
-    Parameters:
-        original_distance_matrix (numpy.ndarray): The target distance matrix.
-        embedded_points (numpy.ndarray): The points in the embedding.
-        weight_matrix (numpy.ndarray): Matrix of weights (same shape as the distance matrix).
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+import tqdm
+
+# -------------------------------
+# Deep Neural Network for MDS
+# -------------------------------
+class DeepNet1(nn.Module):
+    def __init__(self, n_points, dropout=0.2):
+        """
+        A deep neural network with 5 layers that gradually reduces
+        the dimensionality from n_points to 2.
         
-    Returns:
-        float: The computed weighted stress.
-    """
-    recovered_distance_matrix = pairwise_distances(embedded_points)
-    diff = original_distance_matrix - recovered_distance_matrix
-    numerator = np.sum(weight_matrix * (diff ** 2))
-    denominator = np.sum(weight_matrix * (original_distance_matrix ** 2))
-    return np.sqrt(numerator / denominator)
-
-
-# -------------------------------
-# Embedding Function (MDS Only)
-# -------------------------------
-def recover_points_MDS(distance_matrix, n_dimensions=2):
-    """
-    Uses Multidimensional Scaling (MDS) to embed points given a precomputed distance matrix.
-    
-    Parameters:
-        distance_matrix (numpy.ndarray): Precomputed distance matrix.
-        n_dimensions (int): Number of dimensions for the embedding.
+        Parameters:
+          - n_points: The input dimension (number of points).
+          - dropout: Dropout rate for regularization.
+        """
+        super(DeepNet1, self).__init__()
+        self.fc1 = nn.Linear(n_points, 512)
+        self.bn1 = nn.BatchNorm1d(512)
+        self.dropout1 = nn.Dropout(dropout)
         
-    Returns:
-        points (numpy.ndarray): Embedded points.
-        mds_stress (float): Raw stress value from the MDS algorithm (for reference).
-    """
-    mds = MDS(n_components=n_dimensions, dissimilarity="precomputed", random_state=42)
-    points = mds.fit_transform(distance_matrix)
-    return points, mds.stress_
+        self.fc2 = nn.Linear(512, 256)
+        self.bn2 = nn.BatchNorm1d(256) 
+        self.dropout2 = nn.Dropout(dropout)
+        
+        self.fc3 = nn.Linear(256, 128)
+        self.bn3 = nn.BatchNorm1d(128)
+        self.dropout3 = nn.Dropout(dropout)
+        
+        self.fc4 = nn.Linear(128, 64)
+        self.bn4 = nn.BatchNorm1d(64)
+        self.dropout4 = nn.Dropout(dropout)
+        
+        self.fc5 = nn.Linear(64, 2)
+    
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.bn1(x)
+        x = F.relu(x)
+        x = self.dropout1(x)
+        
+        x = self.fc2(x)
+        x = self.bn2(x)
+        x = F.relu(x)
+        x = self.dropout2(x)
+        
+        x = self.fc3(x)
+        x = self.bn3(x)
+        x = F.relu(x)
+        x = self.dropout3(x)
+        
+        x = self.fc4(x)
+        x = self.bn4(x)
+        x = F.relu(x)
+        x = self.dropout4(x)
+        
+        x = self.fc5(x)
+        return x
 
-
-def plot_embedding(points, title, keys=None):
-    """
-    Plots the 2D embedding and optionally labels each point with its key.
-    """
-    plt.figure()
-    plt.scatter(points[:, 0], points[:, 1])
-    if keys is not None:
-        for i, key in enumerate(keys):
-            plt.text(points[i, 0], points[i, 1], str(key), fontsize=9)
-    plt.title(title)
-    plt.xlabel("Dimension 1")
-    plt.ylabel("Dimension 2")
-    plt.show()
-
+class DeepNet(nn.Module):
+    def __init__(self, n_points, dropout=0.3):
+        """
+        A deep neural network with 8 layers that gradually reduces
+        the dimensionality from n_points to 2.
+        
+        Parameters:
+          - n_points: The input dimension.
+          - dropout: Dropout rate for regularization.
+        """
+        super(DeepNet, self).__init__()
+        
+        self.fc1 = nn.Linear(n_points, 1024)
+        self.bn1 = nn.BatchNorm1d(1024)
+        
+        self.fc2 = nn.Linear(1024, 512)
+        self.bn2 = nn.BatchNorm1d(512)
+        
+        self.fc3 = nn.Linear(512, 256)
+        self.bn3 = nn.BatchNorm1d(256)
+        
+        self.fc4 = nn.Linear(256, 128)
+        self.bn4 = nn.BatchNorm1d(128)
+        
+        self.fc5 = nn.Linear(128, 64)
+        self.bn5 = nn.BatchNorm1d(64)
+        
+        self.fc6 = nn.Linear(64, 32)
+        self.bn6 = nn.BatchNorm1d(32)
+        
+        self.fc7 = nn.Linear(32, 16)
+        self.bn7 = nn.BatchNorm1d(16)
+        
+        self.fc8 = nn.Linear(16, 2)
+        
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, x):
+        x = self.dropout(F.silu(self.bn1(self.fc1(x))))
+        x = self.dropout(F.silu(self.bn2(self.fc2(x))))
+        x = self.dropout(F.silu(self.bn3(self.fc3(x))))
+        x = self.dropout(F.silu(self.bn4(self.fc4(x))))
+        x = self.dropout(F.silu(self.bn5(self.fc5(x))))
+        x = self.dropout(F.silu(self.bn6(self.fc6(x))))
+        x = self.dropout(F.silu(self.bn7(self.fc7(x))))
+        x = self.fc8(x)
+        return x
 
 # -------------------------------
-# Testing Function using Weighted Stress
+# Weighted Stress Loss Function
 # -------------------------------
-def test_embeddings(instance, alpha_values, distance_methods, plot=True, top_n=5, mat_stats=False):
+def weighted_stress_loss(pred_points, true_distance, weight_matrix):
     """
-    Tests MDS embeddings over different α values and distance transformation methods.
-    
-    For each configuration, the function computes:
-      - The normalized correlation and distance matrices.
-      - An MDS embedding.
-      - A weighted stress measure computed using weights based on the absolute value
-        of the normalized correlations.
-    
-    The weighted stress is defined as:
-      sqrt( sum_{i<j} w_{ij}(d_{ij} - d̂_{ij})² / sum_{i<j} w_{ij} d_{ij}² )
-    where w_{ij} = |corr_{ij}|.
+    Computes the weighted stress loss between the target distance matrix
+    and the pairwise distances computed from the predicted points.
     
     Parameters:
-      - instance: Data instance with risk time series.
-      - alpha_values: List of α values to test.
-      - distance_methods: List of methods for transforming correlations into distances.
-      - plot: Boolean flag to control whether to show plots (default: True)
-      - top_n: Number of best performing configurations to display when plot=False (default: 5)
-      - mat_stats: If True, prints statistics for the correlation and distance matrices.
+      - pred_points: Tensor of shape (n, 2) with predicted 2D coordinates.
+      - true_distance: Tensor of shape (n, n) with target distances.
+      - weight_matrix: Tensor of shape (n, n) with weights.
       
-    Returns:
-      - results (list): A list of dictionaries containing the configuration and performance metrics.
+    The loss is computed only over the upper triangular matrix (i<j).
     """
-    results = []
+    pred_distance = torch.cdist(pred_points, pred_points, p=2)
+    mask = torch.triu(torch.ones_like(true_distance), diagonal=1)
+    diff = true_distance - pred_distance
+    numerator = torch.sum(mask * weight_matrix * (diff ** 2))
+    denominator = torch.sum(mask * weight_matrix * (true_distance ** 2))
+    loss = numerator / denominator
+    return loss
+
+# -------------------------------
+# Training Function with tqdm and Save Option
+# -------------------------------
+def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e-3, dropout=0.5):
+    """
+    Trains the DeepNet to produce a 2D embedding that minimizes the weighted stress.
     
-    for alpha in tqdm.tqdm(alpha_values, desc="Alpha values"):
-        # Compute correlation matrix and corresponding weight matrix from correlations.
-        keys, corr_matrix = compute_risk_corr_matrix(instance, alpha=alpha)
-        weight_matrix = np.abs(corr_matrix)  # weights based on absolute correlation
+    Parameters:
+      - distance_matrix_np: NumPy array (n x n) with target distances (from compute_distance_matrix).
+      - weight_matrix_np: NumPy array (n x n) with weights (absolute correlation values).
+      - n_epochs: Number of training epochs.
+      - lr: Learning rate.
+      - dropout: Dropout rate for the network.
+    
+    Returns:
+      - pred_points_np: NumPy array (n x 2) of the learned 2D coordinates.
+      - model: The trained PyTorch model.
+    """
+    n_points = distance_matrix_np.shape[0]
+    true_distance = torch.tensor(distance_matrix_np, dtype=torch.float32)
+    weight_matrix = torch.tensor(weight_matrix_np, dtype=torch.float32)
+    
+    # Initialize the model and optimizer.
+    model = DeepNet1(n_points, dropout=dropout)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    
+    # In this setup, the input is the distance matrix itself (each row is a feature vector for one point).
+    input_tensor = torch.tensor(distance_matrix_np, dtype=torch.float32)
+    
+    model.train()
+    for epoch in tqdm.tqdm(range(n_epochs), desc="Training Epochs"):
+        optimizer.zero_grad()
+        pred_points = model(input_tensor)  # shape: (n_points, 2)
+        loss = weighted_stress_loss(pred_points, true_distance, weight_matrix)
+        loss.backward()
+        optimizer.step()
         
-        for d_method in tqdm.tqdm(distance_methods, desc=f"Distance methods (α={alpha})", leave=False):
-            if plot:
-                print(f"\n=== Testing for α = {alpha}, distance transformation = {d_method} ===")
-            keys, dist_matrix = compute_distance_matrix(instance, alpha=alpha, method=d_method)
-            
-            if mat_stats:
-                print(f"\nCORRELATION MATRIX (α={alpha}):")
-                matrix_statistics(corr_matrix)
-                print(f"\nDISTANCE MATRIX (α={alpha}, method={d_method}):")
-                matrix_statistics(dist_matrix)
-            
-            # --- MDS Embedding ---
-            if plot:
-                print(f"\nEmbedding method: MDS")
-            points, mds_raw_stress = recover_points_MDS(dist_matrix, n_dimensions=2)
-            # Compute the weighted stress using our custom function.
-            w_stress = compute_weighted_stress(dist_matrix, points, weight_matrix)
-            if plot:
-                print(f"MDS Raw Stress (from algorithm): {mds_raw_stress:.4f}")
-                print(f"Weighted Stress: {w_stress:.4f}")
-                title = f"MDS (α={alpha}, d_method={d_method})"
-                plot_embedding(points, title, keys)
-            results.append({
-                "alpha": alpha,
-                "distance_method": d_method,
-                "embedding": "MDS",
-                "weighted_stress": w_stress,
-                "raw_stress": mds_raw_stress
-            })
+        # Optionally log progress.
+        if (epoch + 1) % (n_epochs // 10) == 0 or epoch == 0:
+            tqdm.tqdm.write(f"Epoch {epoch+1}/{n_epochs}, Loss: {loss.item():.6f}")
     
-    if not plot:
-        # Sort results by weighted stress (lower is better)
-        sorted_results = sorted(results, key=lambda x: x['weighted_stress'])
-        print("\n=== TOP", top_n, "PERFORMING CONFIGURATIONS ===")
-        print("\nRanked by weighted stress:")
-        for i, result in enumerate(sorted_results[:top_n], 1):
-            print(f"\n{i}. Configuration:")
-            print(f"   Embedding Method: {result['embedding']}")
-            print(f"   Distance Method: {result['distance_method']}")
-            print(f"   Alpha: {result['alpha']}")
-            print(f"   Weighted Stress: {result['weighted_stress']:.4f}")
-            print(f"   MDS Raw Stress: {result['raw_stress']:.4f}")
-            
-    return results
+    # Evaluation: compute the final predictions.
+    model.eval()
+    with torch.no_grad():
+        pred_points = model(input_tensor)
+    
+    # Ask user whether to save the trained model.
+    save_model = input("Save the trained model? (y/n): ").strip().lower()
+    if save_model == 'y':
+        save_path = input("Enter the file path to save the model (e.g., model.pth): ").strip()
+        torch.save(model.state_dict(), save_path)
+        print(f"Model saved to {save_path}")
+    
+    return pred_points.numpy(), model
 
 
 # -------------------------------
@@ -300,39 +349,66 @@ def matrix_statistics(matrix):
     print("\n\n")
 
 
+def compute_weighted_stress(original_distance_matrix, embedded_points, weight_matrix):
+    """
+    Computes the weighted stress between the original distance matrix and the distances
+    in the embedding. The stress is defined as the square root of:
+    
+        (sum_{i<j} w_{ij} (d_{ij} - d̂_{ij})²) / (sum_{i<j} w_{ij} d_{ij}²)
+    
+    where the weights w_{ij} are defined based on the absolute value of the correlation.
+    
+    Parameters:
+        original_distance_matrix (numpy.ndarray): The target distance matrix.
+        embedded_points (numpy.ndarray): The points in the embedding.
+        weight_matrix (numpy.ndarray): Matrix of weights (same shape as the distance matrix).
+        
+    Returns:
+        float: The computed weighted stress.
+    """
+    recovered_distance_matrix = pairwise_distances(embedded_points)
+    diff = original_distance_matrix - recovered_distance_matrix
+    numerator = np.sum(weight_matrix * (diff ** 2))
+    denominator = np.sum(weight_matrix * (original_distance_matrix ** 2))
+    return np.sqrt(numerator / denominator)
+
 # -------------------------------
-# Main Execution Example
+# Example Usage
 # -------------------------------
 if __name__ == "__main__":
+    alpha = 0.05
+    method = 'linear'
+    
+    # Load the instance (your JSON file should have the appropriate structure).
     json_path = 'Decision Matrix/Problem setups/C_01.json'
     with open(json_path, "r") as f:
         data = json.load(f)
     instance = load_instance_from_json(data)
-    keys, corr_matrix = compute_risk_corr_matrix(instance)
-    keys, distance_matrix = compute_distance_matrix(instance)
-    print("Intervention Keys:", keys)
-    print("Distance Matrix:\n", distance_matrix)
+    
+    # Compute the risk correlation matrix.
+    keys, corr_matrix = compute_risk_corr_matrix(instance, alpha)
+    weight_matrix_np = np.abs(corr_matrix)  # Use absolute correlations as weights.
+    
+    # Compute the distance matrix.
+    keys, distance_matrix_np = compute_distance_matrix(instance, alpha, method)
+    
+    print("Starting training of DeepNet...")
+    pred_points, model = train_deep_mdsnet(distance_matrix_np, weight_matrix_np,
+                                           n_epochs=20000, lr=1e-5, dropout=0.2)
+    
+    #Print the weighted stress:
+    weighted_stress = compute_weighted_stress(distance_matrix_np, pred_points, weight_matrix_np)
+    print(f"Weighted stress of learned embedding: {weighted_stress:.4f}")
 
-    # Display statistics of the correlation and distance matrices
-    print("CORRELATION MATRIX:")
-    matrix_statistics(corr_matrix)
-    print("DISTANCE MATRIX:")
-    matrix_statistics(distance_matrix)
-    
-    # Define the α values and distance transformation methods to test
-    alpha_values = np.linspace(0.0004119473684210526, 0.0004457894736842105, 30)
-    distance_methods = [
-        "linear", 
-        "sqrt", 
-        "arccos",
-        "logistic",
-        "exponential", 
-        "power2",
-        "power1/3",
-        "arctan",
-        "sine"
-    ]
-    map_methods = ["MDS"]  # Only MDS is used
-    
-    # Run the testing function using weighted stress as the quality metric
-    results = test_embeddings(instance, alpha_values, distance_methods, plot=False, top_n=5, mat_stats=True)
+    # Plot the learned 2D embedding.
+    plt.figure()
+    plt.scatter(pred_points[:, 0], pred_points[:, 1])
+    for i, key in enumerate(keys):
+        plt.text(pred_points[i, 0], pred_points[i, 1], str(key), fontsize=7)
+    plt.title("Learned 2D Embedding via DeepNet")
+    plt.xlabel("Dimension 1")
+    plt.ylabel("Dimension 2")
+    plt.show()
+
+
+
