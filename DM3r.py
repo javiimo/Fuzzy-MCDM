@@ -315,7 +315,7 @@ if __name__ == "__main__":
     
     # Define the α values and distance transformation methods to test
     #alpha_values = np.linspace(0.0004119473684210526, 0.0004457894736842105, 30)
-    alpha_values = [0.0004240417422867513]
+    alpha_values = np.logspace(-20, 3, 50)
     distance_methods = [
         "linear", 
         "sqrt", 
