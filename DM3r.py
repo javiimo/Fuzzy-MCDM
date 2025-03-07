@@ -252,6 +252,54 @@ def test_embeddings(instance, alpha_values, distance_methods, plot=True, top_n=5
             
     return results
 
+
+def compute_and_save_embedding(instance, alpha, distance_method, points_file, mat_stats=False):
+    """
+    Compute weighted MDS embedding for a given alpha and distance method, plot the embedding,
+    print matrix statistics and weighted stress, and save the computed points to a file.
+
+    Parameters:
+      instance: Data instance with risk time series.
+      alpha: α value used for computing correlation and distance matrices.
+      distance_method: Method for transforming correlations into distances.
+      points_file: File path where the embedding points will be saved.
+      mat_stats: If True, prints statistics for the correlation and distance matrices (default: False).
+
+    Returns:
+      points: The computed embedding points.
+      weighted_stress: The weighted stress of the embedding.
+    """
+    # Compute correlation matrix and weight matrix (absolute correlations)
+    keys, corr_matrix = compute_risk_corr_matrix(instance, alpha=alpha)
+    weight_matrix = np.abs(corr_matrix)
+    
+    # Compute distance matrix using the provided distance method
+    keys, dist_matrix = compute_distance_matrix(instance, alpha=alpha, method=distance_method)
+    
+    if mat_stats:
+        print(f"\nCORRELATION MATRIX (α={alpha}):")
+        matrix_statistics(corr_matrix)
+        print(f"\nDISTANCE MATRIX (α={alpha}, method={distance_method}):")
+        matrix_statistics(dist_matrix)
+    
+    # --- Weighted MDS Embedding using R's SMACOF ---
+    print(f"\nEmbedding method: Weighted MDS (via R's SMACOF)")
+    points, weighted_stress = recover_points_MDS_weighted(dist_matrix, weight_matrix, n_dimensions=2)
+    
+    # Print weighted stress
+    print(f"Weighted Stress (SMACOF): {weighted_stress:.4f}")
+    
+    # Plot the embedding
+    title = f"Weighted MDS (α={alpha}, d_method={distance_method})"
+    plot_embedding(points, title, keys)
+    
+    # Save the embedding points to the provided file path
+    np.save(points_file, points)
+    print(f"Embedding points saved to: {points_file}")
+    
+    return points, weighted_stress
+
+
 # -------------------------------
 # Additional Utility: Matrix Statistics
 # -------------------------------
@@ -294,6 +342,11 @@ def matrix_statistics(matrix):
     print("  % values >0.1 from median:", f"{percent_far_from_median:.1f}%")
     print("\n\n")
 
+
+
+
+
+
 # -------------------------------
 # Main Execution Example
 # -------------------------------
@@ -330,4 +383,10 @@ if __name__ == "__main__":
     ]
     
     # Run the testing function using weighted MDS (via R's SMACOF)
-    results = test_embeddings(instance, alpha_values, distance_methods, plot=True, top_n=5, mat_stats=True)
+    #results = test_embeddings(instance, alpha_values, distance_methods, plot=True, top_n=5, mat_stats=True)
+
+    points_file = "points.npy"  # Define the file path to save the embedding points
+    alpha = alpha_values[0]  # Use the first (and only) alpha value
+    distance_method = distance_methods[0]  # Use the first (and only) distance method
+    points, weighted_stress = compute_and_save_embedding(instance, alpha, distance_method, points_file, mat_stats=True)
+    print("Computed embedding points and weighted stress saved.")
