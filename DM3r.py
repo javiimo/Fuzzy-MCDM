@@ -268,6 +268,7 @@ def compute_and_save_embedding(instance, alpha, distance_method, points_file, ma
     Returns:
       points: The computed embedding points.
       weighted_stress: The weighted stress of the embedding.
+      keys: List of intervention names corresponding to each point.
     """
     # Compute correlation matrix and weight matrix (absolute correlations)
     keys, corr_matrix = compute_risk_corr_matrix(instance, alpha=alpha)
@@ -293,11 +294,14 @@ def compute_and_save_embedding(instance, alpha, distance_method, points_file, ma
     title = f"Weighted MDS (α={alpha}, d_method={distance_method})"
     plot_embedding(points, title, keys)
     
-    # Save the embedding points to the provided file path
+    # Save both the embedding points and intervention keys
     np.save(points_file, points)
+    keys_file = points_file.replace('.npy', '_keys.npy')
+    np.save(keys_file, np.array(keys))
     print(f"Embedding points saved to: {points_file}")
+    print(f"Intervention keys saved to: {keys_file}")
     
-    return points, weighted_stress
+    return points, weighted_stress, keys
 
 
 # -------------------------------
