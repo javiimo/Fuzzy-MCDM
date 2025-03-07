@@ -1,0 +1,81 @@
+1. Configuration:
+   Embedding Method: PCA_UMAP
+   High Dimensions: 25
+   Distance Method: linear
+   Alpha: 2.3894736842105266
+   RMSE: 0.4013
+   RMSE Percentage: 43.66%
+
+
+
+
+TODOS LOS MEJORES VALORES para MDS SON CON LA ARCTAN EN ESE RANGO. Creo que es poque tengo medianas un poco más lejos del 0.5, que son aprox 0.62. Por tanto el err relativo a la mediana es menor. Igual debería minimizar el MSE global.
+
+Para todas las posibles corr to dist tengo que en torno al 50-60% de valores distan menos de 0.1 de la mediana, que está cerca de 0.5 
+
+El mejor alpha lo he buscado con la 
+entre 0.0002 y 0.0007
+el mejor de todos 0.0002 con arctan.
+1. Configuration:
+   Embedding Method: MDS
+   Distance Method: arctan
+   Alpha: 0.00042684210526315787
+   RMSE: 0.2380
+   RMSE Percentage: 37.77%
+   Stress: 407.9868
+
+2. Configuration:
+   Embedding Method: MDS
+   Distance Method: arctan
+   Alpha: 0.00027052631578947366
+   RMSE: 0.2396
+   RMSE Percentage: 37.80%
+   Stress: 413.3737
+
+3. Configuration:
+   Embedding Method: MDS
+   Distance Method: arctan
+   Alpha: 0.0005310526315789474
+   RMSE: 0.2377
+   RMSE Percentage: 37.81%
+   Stress: 406.9875
+
+4. Configuration:
+   Embedding Method: MDS
+   Distance Method: arctan
+   Alpha: 0.000218421052631579
+   RMSE: 0.2401
+   RMSE Percentage: 37.84%
+   Stress: 414.9631
+
+5. Configuration:
+   Embedding Method: MDS
+   Distance Method: arctan
+   Alpha: 0.00047894736842105264
+   RMSE: 0.2382
+   RMSE Percentage: 37.86%
+   Stress: 408.4090
+
+
+
+Así la mejor configuración que he encontrado para diferentes alphas minimizando el RMSE con MDS es:
+1. Configuration:
+   Embedding Method: MDS
+   Distance Method: arctan
+   Alpha: 0.0004457894736842105
+   RMSE: 0.2379
+   RMSE Percentage: 37.78%
+   Stress: 407.6599
+
+POR TANTO VOY A USAR ALPHA = 0.0004240417422867513
+
+
+
+Si minimizamos RMSE saco. Que claro, en este caso el tema está en que es muy baja la mediana, por eso el porcentaje es mayor respecto a la mediana:
+1. Configuration:
+   Embedding Method: MDS
+   Distance Method: power2
+   Alpha: 0.0004119473684210526
+   RMSE: 0.1646
+   RMSE Percentage: 42.19%
+   Stress: 195.1169

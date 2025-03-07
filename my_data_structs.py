@@ -2,6 +2,7 @@ import json
 import statistics
 from dataclasses import dataclass, field
 from typing import List, Dict, Any
+import tqdm
 
 def compute_stats(data: List[float]) -> str:
     """Compute basic statistics (min, max, mean, stdev) for a list of numbers."""

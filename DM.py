@@ -1,5 +1,9 @@
 from my_data_structs import *
 import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.manifold import MDS, Isomap, TSNE
+from sklearn.metrics import pairwise_distances
+import umap
 
 
 def compute_risk_corr_np(risk1, risk2, alpha=1e-15):
@@ -135,6 +139,36 @@ def recover_points_MDS(distance_matrix, n_dimensions=2):
     print("RMSE as percentage of median distance:", (rmse / median_distance) * 100, "%") #acceptable up to a 20% approx
     return points
 
+def matrix_statistics(matrix):
+    # Compute overall statistics (exclude zeros and ones)
+    non_zero_elements = matrix[matrix != 0]
+    non_one_elements = matrix[matrix != 1]
+    non_zero_one_elements = matrix[(matrix != 0) & (matrix != 1)]
+    # Calculate overall statistics
+    overall_max = np.max(non_one_elements) if non_one_elements.size > 0 else 1
+    overall_min = np.min(non_zero_elements) if non_zero_elements.size > 0 else 0
+    overall_mean = np.mean(matrix)
+    overall_median = np.median(matrix)
+    overall_var = np.var(matrix)
+    
+    # Calculate statistics excluding 0s and 1s
+    non_zero_one_mean = np.mean(non_zero_one_elements)
+    non_zero_one_median = np.median(non_zero_one_elements)
+    non_zero_one_var = np.var(non_zero_one_elements)
+    
+    print("\nOverall Matrix Stats:")
+    print("\nContains zeros:      ", np.any(matrix == 0))
+    print("Contains ones:         ", np.any(matrix == 1))
+    print("  Min value (non-zero):", overall_min)
+    print("  Max value (non-one): ", overall_max)
+    print("  Mean value:          ", overall_mean)
+    print("  Median value:        ", overall_median)
+    print("  Variance:            ", overall_var)
+    print("\nStats excluding 0s and 1s:")
+    print("  Mean:                ", non_zero_one_mean)
+    print("  Median:              ", non_zero_one_median) 
+    print("  Variance:            ", non_zero_one_var)
+
 
 
 if __name__ == "__main__":
@@ -142,6 +176,7 @@ if __name__ == "__main__":
     with open(json_path, "r") as f:
         data = json.load(f)
     instance = load_instance_from_json(data)
+    keys, corr_matrix = compute_risk_corr_matrix(instance)
     keys, distance_matrix = compute_distance_matrix(instance)
     print("Intervention Keys:", keys)
     print("Distance Matrix:\n", distance_matrix)
@@ -149,35 +184,11 @@ if __name__ == "__main__":
     ####################################################
     #         Statistics of the distance matrix
     ####################################################
-    # Compute overall statistics (exclude zeros for min)
-    non_zero_elements = distance_matrix[distance_matrix != 0]
-    overall_max = np.max(distance_matrix)
-    overall_min = np.min(non_zero_elements) if non_zero_elements.size > 0 else 0
-    overall_mean = np.mean(distance_matrix)
-    overall_var = np.var(distance_matrix)
+    print("CORRELATION MATRIX:")
+    matrix_statistics(corr_matrix)
+    print("DISTANCE MATRIX:")
+    matrix_statistics(distance_matrix)
     
-    print("\nOverall Distance Matrix Stats:")
-    print("  Max value:           ", overall_max)
-    print("  Min value (non-zero):", overall_min)
-    print("  Mean value:          ", overall_mean)
-    print("  Variance:            ", overall_var)
-    
-    # # Compute and print per-row (and column) stats excluding diagonal zeros.
-    # print("\nRow/Column Stats (excluding diagonal zeros):")
-    # for i, row in enumerate(distance_matrix):
-    #     # Exclude the diagonal zero entry by filtering out zeros.
-    #     row_non_zero = row[row != 0]
-    #     row_min = np.min(row_non_zero) if row_non_zero.size > 0 else 0
-    #     row_max = np.max(row_non_zero) if row_non_zero.size > 0 else 0
-    #     row_mean = np.mean(row_non_zero) if row_non_zero.size > 0 else 0
-    #     row_var = np.var(row_non_zero) if row_non_zero.size > 0 else 0
-    #     print(f"  {keys[i]}:")
-    #     print(f"    Min (non-zero): {row_min}")
-    #     print(f"    Max:            {row_max}")
-    #     print(f"    Mean:           {row_mean}")
-    #     print(f"    Variance:       {row_var}")
-
-
     ####################################################
     #         Creating a map from the distance matrix
     ####################################################
