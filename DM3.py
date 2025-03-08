@@ -2,9 +2,9 @@ from my_data_structs import *
 import json
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.manifold import MDS
 from sklearn.metrics import pairwise_distances
 import tqdm
+import time
 
 # -------------------------------
 # Risk Correlation and Distance Computations
@@ -253,16 +253,20 @@ def weighted_stress_loss(pred_points, true_distance, weight_matrix):
 # -------------------------------
 # Training Function with tqdm and Save Option
 # -------------------------------
-def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e-3, dropout=0.5):
+def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e-3, dropout=0.5,
+                      tol=1e-4, patience=50, model_path=None):
     """
     Trains the DeepNet to produce a 2D embedding that minimizes the weighted stress.
     
     Parameters:
       - distance_matrix_np: NumPy array (n x n) with target distances (from compute_distance_matrix).
       - weight_matrix_np: NumPy array (n x n) with weights (absolute correlation values).
-      - n_epochs: Number of training epochs.
+      - n_epochs: Maximum number of training epochs.
       - lr: Learning rate.
       - dropout: Dropout rate for the network.
+      - tol: Minimum improvement in loss to reset the early stopping counter.
+      - patience: Number of epochs to wait for an improvement before stopping early.
+      - model_path: Path to a .pth file to load the model from. If None, a new model instance is created.
     
     Returns:
       - pred_points_np: NumPy array (n x 2) of the learned 2D coordinates.
@@ -272,14 +276,23 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
     true_distance = torch.tensor(distance_matrix_np, dtype=torch.float32)
     weight_matrix = torch.tensor(weight_matrix_np, dtype=torch.float32)
     
-    # Initialize the model and optimizer.
-    model = DeepNet1(n_points, dropout=dropout)
+    # Initialize or load the model.
+    if model_path is not None:
+        model = DeepNet1(n_points, dropout=dropout)
+        model.load_state_dict(torch.load(model_path))
+        print(f"Loaded model from {model_path}")
+    else:
+        model = DeepNet(n_points, dropout=dropout)
+    
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
-    # In this setup, the input is the distance matrix itself (each row is a feature vector for one point).
+    # Prepare the input tensor (each row is a feature vector for one point).
     input_tensor = torch.tensor(distance_matrix_np, dtype=torch.float32)
     
     model.train()
+    best_loss = float('inf')
+    epochs_no_improve = 0
+    
     for epoch in tqdm.tqdm(range(n_epochs), desc="Training Epochs"):
         optimizer.zero_grad()
         pred_points = model(input_tensor)  # shape: (n_points, 2)
@@ -287,21 +300,31 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
         loss.backward()
         optimizer.step()
         
-        # Optionally log progress.
+        # Logging progress.
         if (epoch + 1) % (n_epochs // 10) == 0 or epoch == 0:
             tqdm.tqdm.write(f"Epoch {epoch+1}/{n_epochs}, Loss: {loss.item():.6f}")
+        
+        # Early stopping: Check if the loss decreased sufficiently.
+        if loss.item() < best_loss - tol:
+            best_loss = loss.item()
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+        
+        if epochs_no_improve >= patience:
+            print(f"Early stopping triggered after {epoch+1} epochs with no sufficient improvement.")
+            break
     
     # Evaluation: compute the final predictions.
     model.eval()
     with torch.no_grad():
         pred_points = model(input_tensor)
     
-    # Ask user whether to save the trained model.
-    save_model = input("Save the trained model? (y/n): ").strip().lower()
-    if save_model == 'y':
-        save_path = input("Enter the file path to save the model (e.g., model.pth): ").strip()
-        torch.save(model.state_dict(), save_path)
-        print(f"Model saved to {save_path}")
+    # Automatically save the model with a timestamp.
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    save_path = f"trained_model_{timestamp}.pth"
+    torch.save(model.state_dict(), save_path)
+    print(f"Model saved to {save_path}")
     
     return pred_points.numpy(), model
 
@@ -376,7 +399,7 @@ def compute_weighted_stress(original_distance_matrix, embedded_points, weight_ma
 # Example Usage
 # -------------------------------
 if __name__ == "__main__":
-    alpha = 0.05
+    alpha = 1.2067926406393314e-06
     method = 'linear'
     
     # Load the instance (your JSON file should have the appropriate structure).
@@ -393,8 +416,7 @@ if __name__ == "__main__":
     keys, distance_matrix_np = compute_distance_matrix(instance, alpha, method)
     
     print("Starting training of DeepNet...")
-    pred_points, model = train_deep_mdsnet(distance_matrix_np, weight_matrix_np,
-                                           n_epochs=20000, lr=1e-5, dropout=0.2)
+    pred_points, model = train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=500000, lr=1e-5, dropout=0.3, tol=1e-3, patience=5000, model_path=None)
     
     #Print the weighted stress:
     weighted_stress = compute_weighted_stress(distance_matrix_np, pred_points, weight_matrix_np)
