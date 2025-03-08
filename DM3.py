@@ -272,9 +272,13 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
       - pred_points_np: NumPy array (n x 2) of the learned 2D coordinates.
       - model: The trained PyTorch model.
     """
+    # Use CUDA if available.
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"CUDA is {'available' if torch.cuda.is_available() else 'not available'}")
+    
     n_points = distance_matrix_np.shape[0]
-    true_distance = torch.tensor(distance_matrix_np, dtype=torch.float32)
-    weight_matrix = torch.tensor(weight_matrix_np, dtype=torch.float32)
+    true_distance = torch.tensor(distance_matrix_np, dtype=torch.float32, device=device)
+    weight_matrix = torch.tensor(weight_matrix_np, dtype=torch.float32, device=device)
     
     # Initialize or load the model.
     if model_path is not None:
@@ -284,10 +288,11 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
     else:
         model = DeepNet(n_points, dropout=dropout)
     
+    model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     # Prepare the input tensor (each row is a feature vector for one point).
-    input_tensor = torch.tensor(distance_matrix_np, dtype=torch.float32)
+    input_tensor = torch.tensor(distance_matrix_np, dtype=torch.float32, device=device)
     
     model.train()
     best_loss = float('inf')
@@ -320,6 +325,9 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
     with torch.no_grad():
         pred_points = model(input_tensor)
     
+    # Move predictions back to CPU.
+    pred_points = pred_points.cpu()
+    
     # Automatically save the model with a timestamp.
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     save_path = f"trained_model_{timestamp}.pth"
@@ -327,6 +335,7 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
     print(f"Model saved to {save_path}")
     
     return pred_points.numpy(), model
+
 
 
 # -------------------------------
@@ -399,6 +408,23 @@ def compute_weighted_stress(original_distance_matrix, embedded_points, weight_ma
 # Example Usage
 # -------------------------------
 if __name__ == "__main__":
+    # Check if CUDA is available and print debug info
+    # print("Checking CUDA availability...")
+    # print(f"PyTorch version: {torch.__version__}")
+    # if not torch.cuda.is_available():
+    #     print("CUDA is not available. Possible reasons:")
+    #     print("1. No NVIDIA GPU detected")
+    #     print("2. NVIDIA drivers not installed")
+    #     print("3. PyTorch not built with CUDA support")
+    #     print("\nTo fix:")
+    #     print("- Verify you have an NVIDIA GPU")
+    #     print("- Install NVIDIA drivers: https://www.nvidia.com/Download/index.aspx")
+    #     print("- Install PyTorch with CUDA: pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118")
+    # else:
+    #     print(f"CUDA is available")
+    #     print(f"GPU device name: {torch.cuda.get_device_name(0)}")
+
+    
     alpha = 1.2067926406393314e-06
     method = 'linear'
     
