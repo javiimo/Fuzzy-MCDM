@@ -359,16 +359,6 @@ if __name__ == "__main__":
     with open(json_path, "r") as f:
         data = json.load(f)
     instance = load_instance_from_json(data)
-    keys, corr_matrix = compute_risk_corr_matrix(instance)
-    keys, distance_matrix = compute_distance_matrix(instance)
-    print("Intervention Keys:", keys)
-    print("Distance Matrix:\n", distance_matrix)
-
-    # Display statistics of the correlation and distance matrices
-    print("CORRELATION MATRIX:")
-    matrix_statistics(corr_matrix)
-    print("DISTANCE MATRIX:")
-    matrix_statistics(distance_matrix)
     
     # Define the α values and distance transformation methods to test
     alpha_values = [1.2067926406393314e-06]
