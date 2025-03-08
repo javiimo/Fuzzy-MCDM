@@ -247,7 +247,7 @@ def weighted_stress_loss(pred_points, true_distance, weight_matrix):
     diff = true_distance - pred_distance
     numerator = torch.sum(mask * weight_matrix * (diff ** 2))
     denominator = torch.sum(mask * weight_matrix * (true_distance ** 2))
-    loss = numerator / denominator
+    loss = torch.sqrt(numerator / denominator)
     return loss
 
 # -------------------------------
