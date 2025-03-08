@@ -361,7 +361,8 @@ if __name__ == "__main__":
     instance = load_instance_from_json(data)
     
     # Define the α values and distance transformation methods to test
-    alpha_values = [1.2067926406393314e-06]
+    alpha_values = [1.2067926406393314e-06] #THIS IS THE ONE I'M USING CURRENTLY
+    #alpha_values = [0.01]
     #alpha_values = np.logspace(-10, -3, 10)
     #alpha_values = np.linspace(1, 10, 10)
     distance_methods = [

@@ -362,6 +362,239 @@ class DeepNet(nn.Module):
         return x
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class DeepNetConv(nn.Module):
+    def __init__(self, n_points, dropout=0.3):
+        """
+        A deep neural network that:
+          - Maps the input to a 1024-dimensional space.
+          - Uses 4 residual blocks (fully connected) to refine features.
+          - Reshapes the vector and applies 4 convolutional layers
+            with stride=2 for gradual reduction.
+          - Uses adaptive pooling followed by 2 fully connected layers
+            to produce a 2-dimensional output.
+          
+        Parameters:
+          - n_points: The input dimension.
+          - dropout: Dropout rate for regularization.
+        """
+        super(DeepNetConv, self).__init__()
+        
+        # Initial mapping: input to 1024 dimensions.
+        self.fc_in = nn.Linear(n_points, 1024)
+        self.bn_in = nn.BatchNorm1d(1024)
+        self.dropout = nn.Dropout(dropout)
+        
+        # 4 residual blocks that preserve the 1024-dim feature space.
+        self.res_blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(1024, 1024),
+                nn.BatchNorm1d(1024),
+                nn.SiLU()
+            ) for _ in range(4)
+        ])
+        
+        # Convolutional layers for gradual reduction.
+        # We first reshape the 1024-dim vector to (batch, 1, 1024)
+        # so that we can use 1D convolutions.
+        self.conv1 = nn.Conv1d(in_channels=1, out_channels=32, kernel_size=3, stride=2, padding=1)
+        self.bn_conv1 = nn.BatchNorm1d(32)
+        
+        self.conv2 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1)
+        self.bn_conv2 = nn.BatchNorm1d(64)
+        
+        self.conv3 = nn.Conv1d(in_channels=64, out_channels=128, kernel_size=3, stride=2, padding=1)
+        self.bn_conv3 = nn.BatchNorm1d(128)
+        
+        self.conv4 = nn.Conv1d(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=1)
+        self.bn_conv4 = nn.BatchNorm1d(256)
+        
+        # Adaptive pooling to force the sequence length to 1.
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
+        
+        # Final two fully connected layers.
+        # Here, we first reduce from 256 to an intermediate 64,
+        # then map to the final 2-dimensional output.
+        self.fc_final1 = nn.Linear(256, 64)
+        self.fc_final2 = nn.Linear(64, 2)
+        
+    def forward(self, x):
+        # x: (batch, n_points)
+        x = self.dropout(F.silu(self.bn_in(self.fc_in(x))))
+        
+        # Residual blocks
+        for block in self.res_blocks:
+            residual = x
+            out = block(x)
+            x = self.dropout(out + residual)
+        
+        # Reshape for convolution: (batch, 1024) -> (batch, 1, 1024)
+        x = x.unsqueeze(1)
+        
+        # Convolutional blocks with gradual reduction.
+        x = self.dropout(F.silu(self.bn_conv1(self.conv1(x))))
+        x = self.dropout(F.silu(self.bn_conv2(self.conv2(x))))
+        x = self.dropout(F.silu(self.bn_conv3(self.conv3(x))))
+        x = self.dropout(F.silu(self.bn_conv4(self.conv4(x))))
+        
+        # Adaptive pooling to get shape (batch, 256, 1)
+        x = self.adaptive_pool(x)
+        x = x.squeeze(2)  # Now (batch, 256)
+        
+        # Final fully connected layers.
+        x = self.dropout(F.silu(self.fc_final1(x)))
+        x = self.fc_final2(x)
+        return x
+
+
+# Using symmetry
+
+class ResidualBlockSymm(nn.Module):
+    """
+    A residual block for per-point features.
+    Expects input of shape (B, n_points, features) and applies a shared MLP on each point.
+    """
+    def __init__(self, features, dropout=0.3):
+        super(ResidualBlockSymm, self).__init__()
+        self.fc1 = nn.Linear(features, features)
+        self.bn1 = nn.BatchNorm1d(features)
+        self.fc2 = nn.Linear(features, features)
+        self.bn2 = nn.BatchNorm1d(features)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, x):
+        # x: (B, n_points, features)
+        residual = x
+        B, n_points, features = x.shape
+        x = x.view(B * n_points, features)
+        x = self.dropout(F.silu(self.bn1(self.fc1(x))))
+        x = self.bn2(self.fc2(x))
+        x = x.view(B, n_points, features)
+        return F.silu(x + residual)
+
+class DeepNetSymm(nn.Module):
+    """
+    Reconstructs the original points from a symmetric distance matrix.
+
+    This architecture uses two branches:
+      - Branch 1 processes each row of the matrix with shared weights and residual blocks,
+        then aggregates features via 1D convolutions.
+      - Branch 2 extracts the unique upper-triangular elements.
+    These are fused and decoded to yield the final point coordinates.
+
+    Parameters:
+      - n_points: Number of points in the distance matrix (matrix is n_points x n_points).
+      - point_dim: Dimensionality of the reconstructed points (e.g., 2 for 2D).
+      - dropout: Dropout probability for regularization.
+    """
+    def __init__(self, n_points, point_dim=2, dropout=0.3):
+        # Fix: use the correct class name here.
+        super(DeepNetSymm, self).__init__()
+        self.n_points = n_points
+        self.point_dim = point_dim
+        
+        # --- Branch 1: Row-wise Processing ---
+        # Each row (length n_points) is processed with a shared MLP.
+        self.row_embedding = nn.Sequential(
+            nn.Linear(n_points, 128),
+            nn.LayerNorm(128),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 256),
+            nn.LayerNorm(256),
+            nn.SiLU(),
+            nn.Dropout(dropout)
+        )
+        # Residual blocks for per-point features.
+        self.res_blocks = nn.ModuleList([ResidualBlockSymm(256, dropout) for _ in range(3)])
+        
+        # Aggregate features over points with 1D convolutions.
+        self.conv1 = nn.Conv1d(in_channels=256, out_channels=256, kernel_size=3, stride=2, padding=1)
+        self.ln_conv1 = nn.LayerNorm(256)
+        self.conv2 = nn.Conv1d(in_channels=256, out_channels=128, kernel_size=3, stride=2, padding=1)
+        self.ln_conv2 = nn.LayerNorm(128)
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(1)  # output shape: (B, channels, 1)
+        
+        # --- Branch 2: Upper Triangular Processing ---
+        # For a symmetric matrix of shape (n_points, n_points), the unique (upper triangular) elements count is:
+        n_upper = n_points * (n_points + 1) // 2
+        self.upper_embedding = nn.Sequential(
+            nn.Linear(n_upper, 256),
+            nn.LayerNorm(256),
+            nn.SiLU(),
+            nn.Dropout(dropout)
+        )
+        
+        # --- Fusion ---
+        # Combine the latent vectors from both branches.
+        # Branch 1 yields 128 dimensions after convolution/pooling,
+        # and Branch 2 yields 256 dimensions.
+        self.fc_latent = nn.Sequential(
+            nn.Linear(128 + 256, 256),
+            nn.LayerNorm(256),
+            nn.SiLU(),
+            nn.Dropout(dropout)
+        )
+        
+        # --- Decoder ---
+        # Two fully connected layers to reconstruct the coordinates for each point.
+        self.fc_dec1 = nn.Linear(256, 256)
+        self.ln_dec1 = nn.LayerNorm(256)
+        self.fc_dec2 = nn.Linear(256, n_points * point_dim)
+        
+    def forward(self, x):
+        """
+        Forward pass.
+        Input:
+          x: Tensor of shape (B, n_points, n_points) representing the symmetric distance matrix.
+        Output:
+          Reconstructed coordinates of shape (B, n_points, point_dim)
+        """
+        # If x is 2D, add a batch dimension.
+        if x.dim() == 2:
+            x = x.unsqueeze(0)  # Now x becomes (1, n_points, n_points)
+        B = x.size(0)
+        # ----- Branch 1: Process rows -----
+        x_rows = x.view(B * self.n_points, self.n_points)  # each row separately
+        row_features = self.row_embedding(x_rows)            # (B*n_points, 256)
+        row_features = row_features.view(B, self.n_points, 256)  # (B, n_points, 256)
+        
+        for block in self.res_blocks:
+            row_features = block(row_features)
+        
+        # Aggregate via convolutions: transpose to (B, channels, n_points)
+        conv_input = row_features.transpose(1, 2)
+        conv_out = F.silu(self.ln_conv1(self.conv1(conv_input).transpose(1, 2)).transpose(1, 2))
+        conv_out = F.silu(self.ln_conv2(self.conv2(conv_out).transpose(1, 2)).transpose(1, 2))
+        latent_conv = self.adaptive_pool(conv_out).squeeze(2)  # (B, 128)
+        
+        # ----- Branch 2: Process upper triangular elements -----
+        upper_vectors = []
+        for i in range(B):
+            mat = x[i]  # shape: (n_points, n_points)
+            idx = torch.triu_indices(self.n_points, self.n_points)
+            upper_vec = mat[idx[0], idx[1]]  # unique elements
+            upper_vectors.append(upper_vec)
+        upper_vectors = torch.stack(upper_vectors, dim=0)  # (B, n_upper)
+        latent_upper = self.upper_embedding(upper_vectors)  # (B, 256)
+        
+        # ----- Fusion -----
+        latent = torch.cat([latent_conv, latent_upper], dim=1)  # (B, 128+256)
+        latent = self.fc_latent(latent)  # (B, 256)
+        
+        # ----- Decoder: Reconstruct coordinates -----
+        dec = F.silu(self.ln_dec1(self.fc_dec1(latent)))
+        out = self.fc_dec2(dec)  # (B, n_points * point_dim)
+        out = out.view(B, self.n_points, self.point_dim)
+        return out
+
+
+
+
+
 # -------------------------------
 # Weighted Stress Loss Function
 # -------------------------------
@@ -421,7 +654,7 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
         model.load_state_dict(torch.load(model_path))
         print(f"Loaded model from {model_path}")
     else:
-        model = DeepNet3(n_points, dropout=dropout)
+        model = DeepNetSymm(n_points, dropout=dropout)
     
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -452,6 +685,7 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
             epochs_no_improve += 1
         
         if epochs_no_improve >= patience:
+            print(f"\nBest Loss Value: {best_loss}\t at epoch {epoch-epochs_no_improve}")
             print(f"\nEarly stopping triggered after {epoch+1} epochs with no sufficient improvement.")
             break
     
@@ -533,7 +767,9 @@ def compute_weighted_stress(original_distance_matrix, embedded_points, weight_ma
     Returns:
         float: The computed weighted stress.
     """
-    recovered_distance_matrix = pairwise_distances(embedded_points)
+    # Squeeze to 2D if needed since pairwise_distances expects <= 2 dimensions
+    points_2d = embedded_points.squeeze(0) if embedded_points.ndim > 2 else embedded_points
+    recovered_distance_matrix = pairwise_distances(points_2d)
     diff = original_distance_matrix - recovered_distance_matrix
     numerator = np.sum(weight_matrix * (diff ** 2))
     denominator = np.sum(weight_matrix * (original_distance_matrix ** 2))
@@ -560,7 +796,8 @@ if __name__ == "__main__":
     #     print(f"GPU device name: {torch.cuda.get_device_name(0)}")
 
 
-    alpha = 1.2067926406393314e-06
+    #alpha = 1.2067926406393314e-06
+    alpha = 0.001
     method = 'linear'
     
     # Load the instance (your JSON file should have the appropriate structure).
@@ -577,7 +814,8 @@ if __name__ == "__main__":
     keys, distance_matrix_np = compute_distance_matrix(instance, alpha, method)
     
     print("Starting training of DeepNet...")
-    pred_points, model = train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=500000, lr=1e-5, dropout=0.2, tol=1e-4, patience=10000, model_path=None)
+    pred_points, model = train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=500000, lr=1e-4, dropout=0.2, tol=1e-5, patience=10000, model_path=None)
+    pred_points = pred_points.squeeze(0)
     
     #Print the weighted stress:
     weighted_stress = compute_weighted_stress(distance_matrix_np, pred_points, weight_matrix_np)
