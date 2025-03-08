@@ -179,7 +179,7 @@ class DeepNet1(nn.Module):
         x = self.fc5(x)
         return x
 
-class DeepNet(nn.Module):
+class DeepNet2(nn.Module):
     def __init__(self, n_points, dropout=0.3):
         """
         A deep neural network with 8 layers that gradually reduces
@@ -226,6 +226,78 @@ class DeepNet(nn.Module):
         x = self.dropout(F.silu(self.bn7(self.fc7(x))))
         x = self.fc8(x)
         return x
+    
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_features, out_features, dropout=0.3):
+        """
+        A residual block that contains two linear layers with batch normalization,
+        SiLU activation, dropout, and a skip connection.
+        If in_features != out_features, a linear projection is used for the shortcut.
+        """
+        super(ResidualBlock, self).__init__()
+        self.fc1 = nn.Linear(in_features, out_features)
+        self.bn1 = nn.BatchNorm1d(out_features)
+        self.fc2 = nn.Linear(out_features, out_features)
+        self.bn2 = nn.BatchNorm1d(out_features)
+        self.dropout = nn.Dropout(dropout)
+        
+        # If dimensions differ, project the input to the correct size.
+        if in_features != out_features:
+            self.shortcut = nn.Linear(in_features, out_features)
+        else:
+            self.shortcut = nn.Identity()
+
+    def forward(self, x):
+        identity = self.shortcut(x)
+        
+        out = self.fc1(x)
+        out = self.bn1(out)
+        out = F.silu(out)
+        out = self.dropout(out)
+        
+        out = self.fc2(out)
+        out = self.bn2(out)
+        out = F.silu(out)
+        out = self.dropout(out)
+        
+        # Add the skip connection.
+        out += identity
+        return out
+
+class DeepNet(nn.Module):
+    def __init__(self, n_points, dropout=0.3):
+        """
+        A deep residual network where each original layer is replaced by a residual block.
+        This model has 8 residual blocks (each with 2 linear layers), making it 16 layers deep,
+        and gradually reduces the dimensionality from n_points to 2.
+        
+        Parameters:
+          - n_points: The input dimension.
+          - dropout: Dropout rate for regularization.
+        """
+        super(DeepNet, self).__init__()
+        
+        self.block1 = ResidualBlock(n_points, 1024, dropout)
+        self.block2 = ResidualBlock(1024, 512, dropout)
+        self.block3 = ResidualBlock(512, 256, dropout)
+        self.block4 = ResidualBlock(256, 128, dropout)
+        self.block5 = ResidualBlock(128, 64, dropout)
+        self.block6 = ResidualBlock(64, 32, dropout)
+        self.block7 = ResidualBlock(32, 16, dropout)
+        self.block8 = ResidualBlock(16, 2, dropout)
+        
+    def forward(self, x):
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x)
+        x = self.block4(x)
+        x = self.block5(x)
+        x = self.block6(x)
+        x = self.block7(x)
+        x = self.block8(x)
+        return x
+
 
 # -------------------------------
 # Weighted Stress Loss Function
@@ -317,7 +389,7 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
             epochs_no_improve += 1
         
         if epochs_no_improve >= patience:
-            print(f"Early stopping triggered after {epoch+1} epochs with no sufficient improvement.")
+            print(f"\nEarly stopping triggered after {epoch+1} epochs with no sufficient improvement.")
             break
     
     # Evaluation: compute the final predictions.
@@ -424,7 +496,7 @@ if __name__ == "__main__":
     #     print(f"CUDA is available")
     #     print(f"GPU device name: {torch.cuda.get_device_name(0)}")
 
-    
+
     alpha = 1.2067926406393314e-06
     method = 'linear'
     
@@ -442,7 +514,7 @@ if __name__ == "__main__":
     keys, distance_matrix_np = compute_distance_matrix(instance, alpha, method)
     
     print("Starting training of DeepNet...")
-    pred_points, model = train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=500000, lr=1e-5, dropout=0.3, tol=1e-3, patience=5000, model_path=None)
+    pred_points, model = train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=500000, lr=1e-5, dropout=0.5, tol=1e-4, patience=10000, model_path=None)
     
     #Print the weighted stress:
     weighted_stress = compute_weighted_stress(distance_matrix_np, pred_points, weight_matrix_np)
