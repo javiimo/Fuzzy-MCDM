@@ -3,9 +3,10 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from shapely.geometry import Point
+from shapely import wkt
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
-from shapely import wkt
+from pyproj import Transformer
 
 def load_french_regions(file_path: str) -> gpd.GeoDataFrame:
     """Load French regions from a GeoJSON file and print basic info."""
@@ -23,7 +24,6 @@ def load_points_and_keys(points_file: str, keys_file: str):
 def scale_points(points: np.ndarray, france_gdf: gpd.GeoDataFrame):
     """
     Scale raw points to fit within the bounding box of the French map.
-    
     Returns scaled x and y coordinate arrays.
     """
     x_points = points[:, 0]
@@ -197,13 +197,12 @@ def plot_franceWparks():
     parks_gdf = gpd.GeoDataFrame(df, geometry="geometry")
 
     # The parks bounding box is large, indicating Web Mercator (EPSG:3857).
-    # Assign that CRS explicitly (instead of EPSG:4326).
     parks_gdf.crs = "EPSG:3857"
 
-    # Now reproject the parks to match France's EPSG:4326.
+    # Reproject the parks to match France's CRS.
     parks_gdf = parks_gdf.to_crs(france_gdf.crs)
 
-    # Plot both so they coincide.
+    # Plot French regions and parks.
     fig, ax = plt.subplots(figsize=(12, 8))
     france_gdf.plot(ax=ax, color="white", edgecolor="black")
     parks_gdf.plot(ax=ax, alpha=0.5, color="green")
@@ -212,98 +211,137 @@ def plot_franceWparks():
     plt.axis("equal")
     plt.show()
 
-def classify_points_with_parks(points_gdf: gpd.GeoDataFrame, parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+def degrees_to_meters(degree: float, latitude: float = 46.5) -> float:
     """
-    Classify each intervention point as inside or outside a park.
-    Adds a new boolean column 'in_park' to the points GeoDataFrame.
+    Convert a distance in degrees (difference in latitude) to meters.
+    This uses a pyproj Transformer from EPSG:4326 to EPSG:3857.
+    
+    Parameters:
+      degree: the distance in degrees.
+      latitude: the representative latitude at which to compute the conversion.
+      
+    Returns:
+      Distance in meters.
     """
-    # Reset index to ensure unique indices for points
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    # Convert two points: one at (lon=0, latitude) and one at (lon=0, latitude + degree)
+    _, y1 = transformer.transform(0, latitude)
+    _, y2 = transformer.transform(0, latitude + degree)
+    return abs(y2 - y1)
+
+def classify_points_with_parks_and_near(points_gdf: gpd.GeoDataFrame, parks_gdf: gpd.GeoDataFrame, near_distance=0.05) -> gpd.GeoDataFrame:
+    """
+    Classify each intervention point relative to park polygons:
+      - 'inside': point is within a park.
+      - 'near': point is not inside, but within a specified distance from a park.
+      - 'outside': point is neither inside nor near a park.
+    
+    Parameters:
+      near_distance: distance threshold (in degrees for EPSG:4326) to consider a point as "near" a park.
+    """
+    # Ensure unique indices.
     points_gdf = points_gdf.reset_index(drop=True)
     
-    # Perform spatial join between points and parks
+    # First, perform spatial join to determine points inside a park.
     joined = gpd.sjoin(points_gdf, parks_gdf[['geometry']], how='left', predicate='within')
+    # Group by original point index: if any joined row is not NaN, mark as inside.
+    inside_series = joined.groupby(joined.index)['index_right'].apply(lambda x: x.notna().any())
     
-    # Group by the original point index: if any joined row is not NaN, mark as inside a park.
-    in_park_series = joined.groupby(joined.index)['index_right'].apply(lambda x: x.notna().any())
+    # Start with all points marked as 'outside'
+    points_gdf['park_status'] = 'outside'
+    points_gdf.loc[inside_series[inside_series].index, 'park_status'] = 'inside'
     
-    # Assign the resulting boolean series to the GeoDataFrame
-    points_gdf['in_park'] = in_park_series
+    # For points not inside, check if they are "near" any park.
+    union_parks = parks_gdf.unary_union
+    mask_outside = points_gdf['park_status'] == 'outside'
+    # Compute distance to the park union for points currently marked as outside.
+    distances = points_gdf.loc[mask_outside].geometry.distance(union_parks)
+    # If the distance is below near_distance, mark the point as 'near'.
+    near_mask = distances < near_distance
+    points_gdf.loc[mask_outside, 'park_status'] = np.where(near_mask, 'near', 'outside')
     
     return points_gdf
 
-
-
 def plot_points_with_parks(france_gdf: gpd.GeoDataFrame, parks_gdf: gpd.GeoDataFrame,
-                           points_gdf: gpd.GeoDataFrame, new_keys: list):
+                           points_gdf: gpd.GeoDataFrame, new_keys: list, near_distance=0.05):
     """
     Plot the French map with park polygons and classify interventions:
-    - Points inside a park are in red.
-    - Points outside a park are in blue.
+      - Red for points inside a park.
+      - Orange for points near a park.
+      - Blue for points outside a park.
+      
+    The legend for the "near" category includes the near_distance converted to meters.
     """
     fig, ax = plt.subplots(figsize=(12, 8))
-    # Plot French map and park polygons
+    # Plot French regions and parks.
     france_gdf.plot(ax=ax, color="white", edgecolor="black")
     parks_gdf.plot(ax=ax, alpha=0.5, color="green")
-
-    # Separate points based on park membership
-    inside = points_gdf[points_gdf["in_park"]]
-    outside = points_gdf[~points_gdf["in_park"]]
-
-    # Plot points: red for inside a park, blue for outside
+    
+    # Separate points by their park_status.
+    inside = points_gdf[points_gdf["park_status"] == "inside"]
+    near = points_gdf[points_gdf["park_status"] == "near"]
+    outside = points_gdf[points_gdf["park_status"] == "outside"]
+    
     if not inside.empty:
         inside.plot(ax=ax, markersize=50, color='red', label="Inside Park")
+    # Convert near_distance (degrees) to meters.
+    near_meters = degrees_to_meters(near_distance)
+    if not near.empty:
+        near_label = f"Near Park (< {int(near_meters)} m)"
+        near.plot(ax=ax, markersize=50, color='orange', label=near_label)
     if not outside.empty:
         outside.plot(ax=ax, markersize=50, color='blue', label="Outside Park")
-
-    # Label each point with its corresponding key
+    
+    # Label each point with its key.
     for i, (x, y) in enumerate(zip(points_gdf['x'], points_gdf['y'])):
         ax.text(x, y, new_keys[i], fontsize=9, color='black', ha='right', va='bottom')
-
+    
     ax.legend(title="Interventions")
-    ax.set_title("Interventions: Inside vs Outside National Parks")
+    ax.set_title("Interventions Classified by Proximity to National Parks")
     plt.show()
 
 def main():
-    # Load French regions and intervention points
+    # Load French regions and intervention points.
     france_gdf = load_french_regions("france.json")
     points, keys = load_points_and_keys("points.npy", "points_keys.npy")
     
-    # Scale points to fit the French map and create a GeoDataFrame
+    # Scale points to fit the French map and create a GeoDataFrame.
     x_scaled, y_scaled = scale_points(points, france_gdf)
     points_gdf = create_points_geodf(x_scaled, y_scaled, france_gdf.crs)
     
-    # Perform spatial join to assign regions
+    # Perform spatial join to assign regions.
     points_gdf = assign_regions(points_gdf, france_gdf)
     
-    # Format intervention keys (e.g., "Intervention_1" -> "I1")
+    # Format intervention keys (e.g., "Intervention_1" -> "I1").
     new_keys = format_keys(keys)
     
-    # Plot the French map with intervention points and labels
+    # Plot the French map with intervention points (colored by region).
     plot_french_map(france_gdf, points_gdf, new_keys)
     
-    # Compute fuzzy distance matrix between interventions
+    # Compute fuzzy distance matrix between interventions.
     region_adjacency = compute_region_adjacency(france_gdf)
     dist_df = compute_fuzzy_distance_matrix(new_keys, points_gdf, region_adjacency)
     
-    # Plot a heatmap of the distance matrix
+    # Plot a heatmap of the distance matrix.
     plot_heatmap(dist_df)
 
-    # Plot French map with national parks
+    # Plot French map with national parks.
     plot_franceWparks()
 
-    # ---- New Code for Park Classification ----
-    # Load parks polygons from CSV, reprojecting to France's CRS
+    # ---- New Code for Park Classification with "Near" Category ----
+    # Load parks polygons from CSV, reprojecting to France's CRS.
     df = pd.read_csv("geojsons_nat_parks/pnr_polygon.csv")
     df["geometry"] = df["the_geom"].apply(wkt.loads)
     parks_gdf = gpd.GeoDataFrame(df, geometry="geometry")
     parks_gdf.crs = "EPSG:3857"
     parks_gdf = parks_gdf.to_crs(france_gdf.crs)
 
-    # Classify intervention points: inside (True) or outside (False) a park
-    points_gdf = classify_points_with_parks(points_gdf, parks_gdf)
+    # Classify intervention points relative to parks, including a "near" category.
+    near_threshold = 0.05
+    points_gdf = classify_points_with_parks_and_near(points_gdf, parks_gdf, near_distance=near_threshold)
 
-    # Plot the French map with park polygons and classify interventions
-    plot_points_with_parks(france_gdf, parks_gdf, points_gdf, new_keys)
+    # Plot the French map with park polygons and interventions classified as inside, near, or outside.
+    plot_points_with_parks(france_gdf, parks_gdf, points_gdf, new_keys, near_distance=near_threshold)
 
 if __name__ == "__main__":
     main()
