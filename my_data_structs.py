@@ -631,25 +631,100 @@ class Solution:
         self.concurrency = [len(interventions) for interventions in self.concurrent_interventions]
     
     def compute_seansonality(self, instance: MaintenanceSchedulingInstance) -> None:
-        ...
+        """
+        Computes and sets the seasonality and season interventions cluster attributes for the solution.
+
+        The seasonality attribute is a dictionary mapping each season name (e.g., 'summer', 'winter', 'is')
+        to the proportion of scheduled interventions that are active in that season.
+        
+        The season_interventions attribute is a dictionary with the same keys as seasonality,
+        where each value is a list of interventions that are active in at least one timestep during that season.
+        
+        Additionally, creates a mapping from timestep to season (timestep_to_season) for use in plotting.
+        
+        Uses the concurrent_interventions attribute, and if it is not computed yet, runs compute_concurrency.
+        
+        Args:
+            instance (MaintenanceSchedulingInstance): The instance containing the planning horizon (T) and seasons.
+        """
+        # Ensure concurrency data is available.
+        if not hasattr(self, 'concurrent_interventions'):
+            self.compute_concurrency(instance)
+        
+        total_interventions = len(self.intervention_starts)
+        self.seasonality = {}         # e.g., {'summer': 0.4, 'winter': 0.3, 'is': 0.2}
+        self.season_interventions = {} # e.g., {'summer': ['I1', 'I3'], 'winter': ['I2'], ...}
+        
+        # Iterate over each season defined in the instance.
+        for season_name, season_obj in instance.seasons.items():
+            active_interventions = set()
+            # Loop over the periods (timesteps) belonging to the season.
+            for period in season_obj.periods:
+                try:
+                    period_int = int(period)
+                except ValueError:
+                    logger.error(f"Period value '{period}' in season '{season_name}' is not an integer.")
+                    continue
+                if 1 <= period_int <= len(self.concurrent_interventions):
+                    active_interventions.update(self.concurrent_interventions[period_int - 1])
+            # Compute the proportion of scheduled interventions active during the season.
+            prop = len(active_interventions) / total_interventions if total_interventions > 0 else 0
+            self.seasonality[season_name] = prop
+            self.season_interventions[season_name] = list(active_interventions)
+        
+        # Create a mapping from timestep to season name for plotting.
+        self.timestep_to_season = {}
+        for season_name, season_obj in instance.seasons.items():
+            for period in season_obj.periods:
+                try:
+                    period_int = int(period)
+                except ValueError:
+                    logger.error(f"Period value '{period}' in season '{season_name}' is not an integer.")
+                    continue
+                if 1 <= period_int <= instance.T:
+                    self.timestep_to_season[period_int] = season_name
+
 
     def plot_concurrency(self) -> None:
         """
         Creates a bar plot showing the number of concurrent interventions at each timestep.
+        Bars are colored according to the season in which the timestep falls, if season data is available.
         If concurrency hasn't been computed yet, prompts user to run compute_concurrency first.
         """
         if not hasattr(self, 'concurrency'):
             print("Please run compute_concurrency() first to calculate concurrency data")
             return
-            
+
         import matplotlib.pyplot as plt
         
+        # If season data is available, assign colors based on season; otherwise, use a default.
+        if not (hasattr(self, 'season_interventions') and hasattr(self, 'timestep_to_season')):
+            colors = ['gray'] * len(self.concurrency)
+        else:
+            # Build a mapping of season name to color.
+            seasons = list(self.season_interventions.keys())
+            default_colors = ['gold', 'skyblue', 'lightgreen', 'salmon', 'plum']
+            color_map = {'winter': 'lightblue', 'summer': 'peachpuff', 'is': 'lightgreen'}
+            
+            # Assign a color for each timestep based on its season.
+            colors = []
+            for t in range(1, len(self.concurrency) + 1):
+                season = self.timestep_to_season.get(t, None)
+                colors.append(color_map.get(season, 'gray'))
+        
         plt.figure(figsize=(10,6))
-        plt.bar(range(1, len(self.concurrency) + 1), self.concurrency)
+        plt.bar(range(1, len(self.concurrency) + 1), self.concurrency, color=colors)
         plt.xlabel('Timestep')
         plt.ylabel('Number of Concurrent Interventions')
         plt.title('Intervention Concurrency Over Time')
         plt.grid(True, alpha=0.3)
+        
+        # Add legend if season data is available.
+        if hasattr(self, 'season_interventions'):
+            import matplotlib.patches as mpatches
+            patches = [mpatches.Patch(color=color_map[season], label=season) for season in color_map]
+            plt.legend(handles=patches, title="Season")
+            
         plt.show()
 
 
@@ -720,7 +795,11 @@ if __name__ == "__main__":
     sol.compute_concurrency(instance)
 
 
-    print(f"Concurrency:\n{sol.concurrency}")
+    # print(f"Concurrency:\n{sol.concurrency}")
     sol.plot_concurrency()
     #print(f"\n\nConcurrent Interventions:\n{sol.concurrent_interventions}")
+    sol.compute_seansonality(instance)
+
+    print(sol.seasonality) #! Does not add to 1 since there are multiple interventions spanning various seasons.
+    sol.plot_concurrency()
 
