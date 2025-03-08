@@ -2,7 +2,16 @@ import json
 import statistics
 from dataclasses import dataclass, field
 from typing import List, Dict, Any
-import tqdm
+import logging
+
+# Set up the logger for errors and warnings
+logger = logging.getLogger("error_logger")
+logger.setLevel(logging.DEBUG)
+fh = logging.FileHandler("error.log")
+fh.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(funcName)s - %(levelname)s - %(message)s')
+fh.setFormatter(formatter)
+logger.addHandler(fh)
 
 def compute_stats(data: List[float]) -> str:
     """Compute basic statistics (min, max, mean, stdev) for a list of numbers."""
@@ -396,7 +405,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         T = json_data["T"]
         scenarios_number = json_data["Scenarios_number"]
     except Exception as e:
-        print(f"Error reading instance horizon or scenarios: {e}")
+        logger.error(f"Error reading instance horizon or scenarios: {e}", exc_info=True)
         T = 0
         scenarios_number = []
     instance = MaintenanceSchedulingInstance(T=T, scenarios_number=scenarios_number)
@@ -417,7 +426,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
             )
             instance.add_resource(resource)
         except Exception as e:
-            print(f"Error loading resource '{res_name}': {e}")
+            logger.error(f"Error loading resource '{res_name}': {e}", exc_info=True)
             continue
     print("Finished loading Resources.")
     
@@ -432,7 +441,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
             season = Season(name=season_name, periods=periods)
             instance.add_season(season)
         except Exception as e:
-            print(f"Error loading season '{season_name}': {e}")
+            logger.error(f"Error loading season '{season_name}': {e}", exc_info=True)
             continue
     print("Finished loading Seasons.")
     
@@ -442,17 +451,18 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
     _intv_counter = 0
     for intv_name, intv_data in json_data.get("Interventions", {}).items():
         _intv_counter += 1
+        intv_name = f"I{intv_name.split('_')[1]}" 
         print(f"Loading intervention {_intv_counter} of {_total_interventions}: {intv_name}")
         try:
             tmax = int(intv_data["tmax"])
         except Exception as e:
-            print(f"Error loading tmax for intervention '{intv_name}': {e}")
+            logger.error(f"Error loading tmax for intervention '{intv_name}': {e}", exc_info=True)
             continue
         
         try:
             intervention = Intervention(name=intv_name, tmax=tmax)
         except Exception as e:
-            print(f"Error creating intervention '{intv_name}': {e}")
+            logger.error(f"Error creating intervention '{intv_name}': {e}", exc_info=True)
             continue
         
         delta_list = intv_data.get("Delta", [])
@@ -480,7 +490,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
                                 workload_list[t - 1] = inner_mapping[str(i)]
                     option_workloads[res_name] = workload_list
             except Exception as e:
-                print(f"Error loading workload for intervention '{intv_name}', option {i}: {e}")
+                logger.error(f"Error loading workload for intervention '{intv_name}', option {i}: {e}", exc_info=True)
                 continue  # Skip this option if workload processing fails.
             
             try:
@@ -492,7 +502,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
                         if str(i) in inner_mapping:
                             option_risks[t - 1] = inner_mapping[str(i)]
             except Exception as e:
-                print(f"Error loading risk for intervention '{intv_name}', option {i}: {e}")
+                logger.error(f"Error loading risk for intervention '{intv_name}', option {i}: {e}", exc_info=True)
                 continue  # Skip this option if risk processing fails.
             
             try:
@@ -504,16 +514,16 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
                 )
                 intervention.add_option(option)
             except Exception as e:
-                print(f"Error adding schedule option for intervention '{intv_name}', option {i}: {e}")
+                logger.error(f"Error adding schedule option for intervention '{intv_name}', option {i}: {e}", exc_info=True)
                 continue
         print(f"Finished loading options for intervention {intv_name}.")
-        #Compute the overall mean risks list once all options are added
+        # Compute the overall mean risks list once all options are added.
         intervention.compute_overall_mean_risk()
 
         try:
             instance.add_intervention(intervention)
         except Exception as e:
-            print(f"Error adding intervention '{intv_name}': {e}")
+            logger.error(f"Error adding intervention '{intv_name}': {e}", exc_info=True)
             continue
     print("Finished loading Interventions.")
     
@@ -534,7 +544,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
                 )
                 instance.add_exclusion(exclusion)
         except Exception as e:
-            print(f"Error loading exclusion '{excl_key}': {e}")
+            logger.error(f"Error loading exclusion '{excl_key}': {e}", exc_info=True)
             continue
     print("Finished loading Exclusions.")
     
@@ -571,10 +581,77 @@ class Solution:
                         intervention = intervention.replace('Intervention_', 'I')
                         self.intervention_starts[intervention] = int(start_time)
         except Exception as e:
-            print(f"Error loading solution from {solution_path}: {e}")
+            logger.error(f"Error loading solution from {solution_path}: {e}", exc_info=True)
 
     def __str__(self) -> str:
         return "\n".join(f"{k}: {v}" for k,v in self.intervention_starts.items())
+    
+    def compute_concurrency(self, instance: MaintenanceSchedulingInstance) -> None:
+        """
+        Computes and sets the concurrent_interventions and concurrency attributes for the solution.
+
+        The concurrent_interventions attribute is a list of lists of length T (from the instance),
+        where each inner list contains the names of interventions that are active at that timestep.
+        The concurrency attribute is then computed as the length of each inner list.
+
+        Args:
+            instance (MaintenanceSchedulingInstance): The instance containing the planning horizon (T)
+                and interventions.
+        """
+        # Initialize concurrent_interventions as a list of empty lists for each timestep.
+        self.concurrent_interventions = [[] for _ in range(int(instance.T))]
+
+        
+        # Iterate over each scheduled intervention in the solution.
+        for intervention_name, start_time in self.intervention_starts.items():
+            # Retrieve the corresponding intervention object from the instance.
+            intervention = instance.interventions.get(intervention_name)
+            if intervention is None:
+                logger.warning(f"Intervention {intervention_name} not found in instance.")
+                continue
+            
+            # Find the schedule option matching the start_time.
+            matching_option = None
+            for option in intervention.options:
+                if option.start_time == start_time:
+                    matching_option = option
+                    break
+            if matching_option is None:
+                logger.warning(f"No schedule option with start_time {start_time} for intervention {intervention_name}.")
+                continue
+            
+            # Mark the intervention as active for its duration.
+            # Note: timesteps and start times begin at 1; list indices start at 0.
+            for t in range(start_time, start_time + matching_option.duration):
+                print(f"Duration: {matching_option.duration}, Start Time: {start_time}, Intervention: {intervention_name}, timestep append: {t}")
+                if 1 <= t <= instance.T:
+                    self.concurrent_interventions[t - 1].append(intervention_name)
+        
+        # Define concurrency as the number of interventions active at each timestep.
+        self.concurrency = [len(interventions) for interventions in self.concurrent_interventions]
+    
+    def compute_seansonality(self, instance: MaintenanceSchedulingInstance) -> None:
+        ...
+
+    def plot_concurrency(self) -> None:
+        """
+        Creates a bar plot showing the number of concurrent interventions at each timestep.
+        If concurrency hasn't been computed yet, prompts user to run compute_concurrency first.
+        """
+        if not hasattr(self, 'concurrency'):
+            print("Please run compute_concurrency() first to calculate concurrency data")
+            return
+            
+        import matplotlib.pyplot as plt
+        
+        plt.figure(figsize=(10,6))
+        plt.bar(range(1, len(self.concurrency) + 1), self.concurrency)
+        plt.xlabel('Timestep')
+        plt.ylabel('Number of Concurrent Interventions')
+        plt.title('Intervention Concurrency Over Time')
+        plt.grid(True, alpha=0.3)
+        plt.show()
+
 
 
 # ---------------------------
@@ -582,7 +659,7 @@ class Solution:
 # ---------------------------
 if __name__ == "__main__":
     #Load Json
-    json_path = 'challenge-roadef-2020/example1.json'
+    json_path = 'Decision Matrix/Problem setups/C_01.json'
     with open(json_path, "r") as f:
         data = json.load(f)
 
@@ -626,14 +703,24 @@ if __name__ == "__main__":
     
     # Load instance from JSON.
     instance = load_instance_from_json(data)
-    
+
+    #print(instance.interventions.get("I135").name)
+    print(f"# interventions: {len(instance.interventions)}")
+
     # Print the instance with detailed metrics.
-    for int in instance.interventions.values():
-        print(int)
     #instance.show()
 
     # Test loading solution from file
     solution_path = 'Decision Matrix/Alternatives/1/solution_C_01_900.txt'
     
-    #print(Solution(solution_path))
+    sol = Solution(solution_path)
+    
+    print(max(sol.intervention_starts.values()))
+
+    sol.compute_concurrency(instance)
+
+
+    print(f"Concurrency:\n{sol.concurrency}")
+    sol.plot_concurrency()
+    #print(f"\n\nConcurrent Interventions:\n{sol.concurrent_interventions}")
 
