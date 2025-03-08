@@ -199,6 +199,38 @@ def plot_heatmap(dist_df: pd.DataFrame):
     plt.show()
 
 
+def plot_franceWparks():
+    import geopandas as gpd
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    from shapely import wkt
+
+    # Load French regions (already EPSG:4326).
+    france_gdf = load_french_regions("france.json")  
+    print("France CRS:", france_gdf.crs)
+
+    # Read the CSV containing park polygons. Convert WKT -> geometry.
+    df = pd.read_csv("geojsons_nat_parks/pnr_polygon.csv")
+    df["geometry"] = df["the_geom"].apply(wkt.loads)
+    parks_gdf = gpd.GeoDataFrame(df, geometry="geometry")
+
+    # The parks bounding box is large, indicating Web Mercator (EPSG:3857).
+    # Assign that CRS explicitly (instead of EPSG:4326).
+    parks_gdf.crs = "EPSG:3857"
+
+    # Now reproject the parks to match France's EPSG:4326.
+    parks_gdf = parks_gdf.to_crs(france_gdf.crs)
+
+    # Plot both so they coincide.
+    fig, ax = plt.subplots(figsize=(12, 8))
+    france_gdf.plot(ax=ax, color="white", edgecolor="black")
+    parks_gdf.plot(ax=ax, alpha=0.5, color="green")
+
+    plt.title("National Parks of France")
+    plt.axis("equal")
+    plt.show()
+
+
 def main():
     # Load French regions and intervention points
     france_gdf = load_french_regions("france.json")
@@ -224,6 +256,7 @@ def main():
     # Plot a heatmap of the distance matrix
     plot_heatmap(dist_df)
 
+    plot_franceWparks()
 
 if __name__ == "__main__":
     main()
