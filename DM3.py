@@ -189,7 +189,7 @@ class DeepNet2(nn.Module):
           - n_points: The input dimension.
           - dropout: Dropout rate for regularization.
         """
-        super(DeepNet, self).__init__()
+        super(DeepNet2, self).__init__()
         
         self.fc1 = nn.Linear(n_points, 1024)
         self.bn1 = nn.BatchNorm1d(1024)
@@ -227,6 +227,69 @@ class DeepNet2(nn.Module):
         x = self.fc8(x)
         return x
     
+
+class DeepNet3(nn.Module):
+    def __init__(self, n_points, dropout=0.3):
+        """
+        A deep neural network with 12 layers:
+          - 1 input layer mapping n_points to 1024,
+          - 8 intermediate layers with residual connections (all with 1024 dimensions),
+          - 4 final layers for a steeper reduction to the 2-dimensional output.
+          
+        Parameters:
+          - n_points: The input dimension.
+          - dropout: Dropout rate for regularization.
+        """
+        super(DeepNet3, self).__init__()
+        
+        # Initial layer: input to high-dimensional representation.
+        self.fc_in = nn.Linear(n_points, 1024)
+        self.bn_in = nn.BatchNorm1d(1024)
+        
+        # 8 intermediate layers (residual blocks) with constant dimensionality.
+        # Using ModuleList to store a sequence of identical blocks.
+        self.res_layers = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(1024, 1024),
+                nn.BatchNorm1d(1024),
+                nn.SiLU()
+            )
+            for _ in range(8)
+        ])
+        
+        # 4 layers of dimensionality reduction (steeper drop):
+        # Reducing dimensions from 1024 -> 256 -> 64 -> 16 -> 2.
+        self.fc9  = nn.Linear(1024, 256)
+        self.bn9  = nn.BatchNorm1d(256)
+        
+        self.fc10 = nn.Linear(256, 64)
+        self.bn10 = nn.BatchNorm1d(64)
+        
+        self.fc11 = nn.Linear(64, 16)
+        self.bn11 = nn.BatchNorm1d(16)
+        
+        self.fc12 = nn.Linear(16, 2)
+        
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, x):
+        # Input mapping
+        x = self.dropout(F.silu(self.bn_in(self.fc_in(x))))
+        
+        # Pass through 8 residual layers.
+        # Each block: output = F(x) + x.
+        for layer in self.res_layers:
+            residual = x
+            out = layer(x)
+            x = self.dropout(out + residual)
+        
+        # Dimensionality reduction layers.
+        x = self.dropout(F.silu(self.bn9(self.fc9(x))))
+        x = self.dropout(F.silu(self.bn10(self.fc10(x))))
+        x = self.dropout(F.silu(self.bn11(self.fc11(x))))
+        x = self.fc12(x)
+        return x
+
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_features, out_features, dropout=0.3):
@@ -358,10 +421,10 @@ def train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=1000, lr=1e
         model.load_state_dict(torch.load(model_path))
         print(f"Loaded model from {model_path}")
     else:
-        model = DeepNet(n_points, dropout=dropout)
+        model = DeepNet3(n_points, dropout=dropout)
     
     model = model.to(device)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     
     # Prepare the input tensor (each row is a feature vector for one point).
     input_tensor = torch.tensor(distance_matrix_np, dtype=torch.float32, device=device)
@@ -514,7 +577,7 @@ if __name__ == "__main__":
     keys, distance_matrix_np = compute_distance_matrix(instance, alpha, method)
     
     print("Starting training of DeepNet...")
-    pred_points, model = train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=500000, lr=1e-5, dropout=0.5, tol=1e-4, patience=10000, model_path=None)
+    pred_points, model = train_deep_mdsnet(distance_matrix_np, weight_matrix_np, n_epochs=500000, lr=1e-5, dropout=0.2, tol=1e-4, patience=10000, model_path=None)
     
     #Print the weighted stress:
     weighted_stress = compute_weighted_stress(distance_matrix_np, pred_points, weight_matrix_np)
