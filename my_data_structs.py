@@ -96,29 +96,31 @@ class ScheduleOption:
                For example: [[4,8,2], [0,0], [0,0,0]].
         mean_risk: A list of mean risk values calculated for each timestep for THIS start time across all scenarios. 
                    Only using non-zero risks.
-        worst_risk: highest risk for THIS start time and intervetion across all scenarios and timesteps.
+        worst_risk: The highest risk value across all timesteps and scenarios.
     """
     start_time: int
     duration: int
     workloads: Dict[str, List[float]]
     risks: List[List[float]]
-    worst_risk: float
-    mean_risk: List[float] = field(default_factory=list)  # Default value as a list
-    
+    mean_risk: List[float] = field(default_factory=list)
+    worst_risk: float = field(default=0.0)  # New attribute for the highest risk
+
     def __post_init__(self):
         if self.risks:
             self.mean_risk = []
-            worst_risks = [] #worst risk for each timestep of the intervention
             for timestep_risks in self.risks:
-                # Take the highest for the worst risk
-                worst_risks.append(max(timestep_risks))
                 # Only consider non-zero risk values
                 non_zero_risks = [value for value in timestep_risks if value > 0]
                 total_risk = sum(non_zero_risks)
                 total_scenarios = len(non_zero_risks)
                 mean = total_risk / total_scenarios if total_scenarios > 0 else 0.0
                 self.mean_risk.append(mean)
-            self.worst_risk = max(worst_risks) #worst risk for this intervention with this st.
+            # Compute worst_risk as the maximum risk value across all timesteps and scenarios.
+            all_risks = [value for timestep in self.risks for value in timestep]
+            self.worst_risk = max(all_risks) if all_risks else 0.0
+        else:
+            self.mean_risk = []
+            self.worst_risk = 0.0
 
 
     def __str__(self) -> str:
@@ -217,6 +219,7 @@ class Intervention:
             f"  Overall Mean Risk = {overall_risk_str}\n"
             f"  Schedule Options:\n  {options_str}"
         )
+
 
 
 @dataclass
@@ -733,32 +736,35 @@ class Solution:
             
         plt.show()
 
+
     def set_worst_risks(self, instance: MaintenanceSchedulingInstance) -> None:
         """
         For each intervention in the solution, find the scheduling option (using the start time)
         and record its worst_risk. Stores the worst risks in a list called 'worst_risks' and
         in a dictionary 'intervention_worst_risk' mapping each intervention to its worst risk.
         """
-        # Initialize the attributes to store risk information.
-        self.intervention_worst_risk = {}  # Dict mapping intervention name to worst risk.
-
-        # Iterate over each intervention and its scheduled start time.
-        for intv_name, start_time in self.intervention_starts.items():
-            # Look for the intervention in the provided instance.
-            if intv_name in instance.interventions:
-                intervention = instance.interventions[intv_name]
-                # Find the schedule option that corresponds to the start time.
-                option = next((opt for opt in intervention.options if opt.start_time == start_time), None)
-                if option is not None:
-                    worst_risk = option.worst_risk
-                    self.intervention_worst_risk[intv_name] = worst_risk
-                else:
-                    logger.error(f"No scheduling option found for intervention {intv_name} with start time {start_time}")
-            else:
-                logger.error(f"Intervention {intv_name} not found in the instance interventions.")
-
-    
-
+        self.worst_risks = []
+        self.intervention_worst_risk = {}
+        for intervention_name, start_time in self.intervention_starts.items():
+            # Retrieve the corresponding intervention object from the instance.
+            intervention = instance.interventions.get(intervention_name)
+            if intervention is None:
+                logger.warning(f"Intervention {intervention_name} not found in instance.")
+                continue
+            
+            # Find the schedule option matching the start_time.
+            matching_option = None
+            for option in intervention.options:
+                if option.start_time == start_time:
+                    matching_option = option
+                    break
+            if matching_option is None:
+                logger.warning(f"No schedule option with start_time {start_time} for intervention {intervention_name}.")
+                continue
+            
+            worst_risk = matching_option.worst_risk
+            self.worst_risks.append(worst_risk)
+            self.intervention_worst_risk[intervention_name] = worst_risk
 
 
 
@@ -833,10 +839,11 @@ if __name__ == "__main__":
     #print(f"\n\nConcurrent Interventions:\n{sol.concurrent_interventions}")
     sol.compute_seansonality(instance)
 
-    # print(sol.seasonality) #! Does not add to 1 since there are multiple interventions spanning various seasons.
-    # sol.plot_concurrency()
+    print(sol.seasonality) #! Does not add to 1 since there are multiple interventions spanning various seasons.
+    sol.plot_concurrency()
 
+    sol.set_worst_risks(instance)
 
-    # sol.set_worst_risks(instance)
-    # print(sol.intervention_worst_risk)
+    print(sol.worst_risks)
+
 
