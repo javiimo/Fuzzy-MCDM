@@ -3,10 +3,9 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from shapely.geometry import Point
-import seaborn as sns
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
-
+from shapely import wkt
 
 def load_french_regions(file_path: str) -> gpd.GeoDataFrame:
     """Load French regions from a GeoJSON file and print basic info."""
@@ -15,13 +14,11 @@ def load_french_regions(file_path: str) -> gpd.GeoDataFrame:
     print("CRS:", france_gdf.crs)
     return france_gdf
 
-
 def load_points_and_keys(points_file: str, keys_file: str):
     """Load intervention points and keys from numpy files."""
     points = np.load(points_file)           # shape (n_points, 2)
     keys = np.load(keys_file)
     return points, keys
-
 
 def scale_points(points: np.ndarray, france_gdf: gpd.GeoDataFrame):
     """
@@ -47,7 +44,6 @@ def scale_points(points: np.ndarray, france_gdf: gpd.GeoDataFrame):
     
     return x_points_scaled, y_points_scaled
 
-
 def create_points_geodf(x_points_scaled, y_points_scaled, crs) -> gpd.GeoDataFrame:
     """Create a GeoDataFrame from scaled x and y coordinates."""
     df = pd.DataFrame({'x': x_points_scaled, 'y': y_points_scaled})
@@ -57,7 +53,6 @@ def create_points_geodf(x_points_scaled, y_points_scaled, crs) -> gpd.GeoDataFra
         crs=crs  # ensure CRS consistency
     )
     return gdf
-
 
 def assign_regions(points_gdf: gpd.GeoDataFrame, france_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """
@@ -74,7 +69,6 @@ def assign_regions(points_gdf: gpd.GeoDataFrame, france_gdf: gpd.GeoDataFrame) -
     print(points_gdf.head())
     return points_gdf
 
-
 def format_keys(keys: np.ndarray) -> list:
     """
     Format intervention keys so that they appear as I1, I2, I3, etc.
@@ -87,7 +81,6 @@ def format_keys(keys: np.ndarray) -> list:
         else:
             new_keys.append(key)
     return new_keys
-
 
 def plot_french_map(france_gdf: gpd.GeoDataFrame, points_gdf: gpd.GeoDataFrame, new_keys: list):
     """
@@ -118,7 +111,6 @@ def plot_french_map(france_gdf: gpd.GeoDataFrame, points_gdf: gpd.GeoDataFrame, 
     ax.legend(title="French Regions")
     plt.show()
 
-
 def compute_region_adjacency(france_gdf: gpd.GeoDataFrame) -> dict:
     """
     Create an adjacency dictionary keyed by region name.
@@ -131,7 +123,6 @@ def compute_region_adjacency(france_gdf: gpd.GeoDataFrame) -> dict:
                 if region1.geometry.touches(region2.geometry):
                     region_adjacency[region1["NAME_1"]].add(region2["NAME_1"])
     return region_adjacency
-
 
 def compute_fuzzy_distance_matrix(new_keys: list, points_gdf: gpd.GeoDataFrame, region_adjacency: dict) -> pd.DataFrame:
     """
@@ -163,7 +154,6 @@ def compute_fuzzy_distance_matrix(new_keys: list, points_gdf: gpd.GeoDataFrame, 
     print(dist_df)
     return dist_df
 
-
 def plot_heatmap(dist_df: pd.DataFrame):
     """
     Plot a heatmap of the fuzzy distance matrix.
@@ -178,12 +168,7 @@ def plot_heatmap(dist_df: pd.DataFrame):
     norm = mcolors.BoundaryNorm(bounds, cmap.N)
 
     plt.figure(figsize=(10, 8))
-    sns.heatmap(num_matrix,
-                cmap=cmap,
-                norm=norm,
-                xticklabels=False,
-                yticklabels=False,
-                cbar=False)
+    plt.imshow(num_matrix, cmap=cmap, norm=norm)
     plt.xlabel("Interventions")
     plt.ylabel("Interventions")
     
@@ -198,13 +183,10 @@ def plot_heatmap(dist_df: pd.DataFrame):
     plt.tight_layout()
     plt.show()
 
-
 def plot_franceWparks():
-    import geopandas as gpd
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    from shapely import wkt
-
+    """
+    Plot the French map with park polygons.
+    """
     # Load French regions (already EPSG:4326).
     france_gdf = load_french_regions("france.json")  
     print("France CRS:", france_gdf.crs)
@@ -230,6 +212,56 @@ def plot_franceWparks():
     plt.axis("equal")
     plt.show()
 
+def classify_points_with_parks(points_gdf: gpd.GeoDataFrame, parks_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    Classify each intervention point as inside or outside a park.
+    Adds a new boolean column 'in_park' to the points GeoDataFrame.
+    """
+    # Reset index to ensure unique indices for points
+    points_gdf = points_gdf.reset_index(drop=True)
+    
+    # Perform spatial join between points and parks
+    joined = gpd.sjoin(points_gdf, parks_gdf[['geometry']], how='left', predicate='within')
+    
+    # Group by the original point index: if any joined row is not NaN, mark as inside a park.
+    in_park_series = joined.groupby(joined.index)['index_right'].apply(lambda x: x.notna().any())
+    
+    # Assign the resulting boolean series to the GeoDataFrame
+    points_gdf['in_park'] = in_park_series
+    
+    return points_gdf
+
+
+
+def plot_points_with_parks(france_gdf: gpd.GeoDataFrame, parks_gdf: gpd.GeoDataFrame,
+                           points_gdf: gpd.GeoDataFrame, new_keys: list):
+    """
+    Plot the French map with park polygons and classify interventions:
+    - Points inside a park are in red.
+    - Points outside a park are in blue.
+    """
+    fig, ax = plt.subplots(figsize=(12, 8))
+    # Plot French map and park polygons
+    france_gdf.plot(ax=ax, color="white", edgecolor="black")
+    parks_gdf.plot(ax=ax, alpha=0.5, color="green")
+
+    # Separate points based on park membership
+    inside = points_gdf[points_gdf["in_park"]]
+    outside = points_gdf[~points_gdf["in_park"]]
+
+    # Plot points: red for inside a park, blue for outside
+    if not inside.empty:
+        inside.plot(ax=ax, markersize=50, color='red', label="Inside Park")
+    if not outside.empty:
+        outside.plot(ax=ax, markersize=50, color='blue', label="Outside Park")
+
+    # Label each point with its corresponding key
+    for i, (x, y) in enumerate(zip(points_gdf['x'], points_gdf['y'])):
+        ax.text(x, y, new_keys[i], fontsize=9, color='black', ha='right', va='bottom')
+
+    ax.legend(title="Interventions")
+    ax.set_title("Interventions: Inside vs Outside National Parks")
+    plt.show()
 
 def main():
     # Load French regions and intervention points
@@ -256,7 +288,22 @@ def main():
     # Plot a heatmap of the distance matrix
     plot_heatmap(dist_df)
 
+    # Plot French map with national parks
     plot_franceWparks()
+
+    # ---- New Code for Park Classification ----
+    # Load parks polygons from CSV, reprojecting to France's CRS
+    df = pd.read_csv("geojsons_nat_parks/pnr_polygon.csv")
+    df["geometry"] = df["the_geom"].apply(wkt.loads)
+    parks_gdf = gpd.GeoDataFrame(df, geometry="geometry")
+    parks_gdf.crs = "EPSG:3857"
+    parks_gdf = parks_gdf.to_crs(france_gdf.crs)
+
+    # Classify intervention points: inside (True) or outside (False) a park
+    points_gdf = classify_points_with_parks(points_gdf, parks_gdf)
+
+    # Plot the French map with park polygons and classify interventions
+    plot_points_with_parks(france_gdf, parks_gdf, points_gdf, new_keys)
 
 if __name__ == "__main__":
     main()
