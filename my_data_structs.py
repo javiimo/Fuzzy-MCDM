@@ -81,6 +81,7 @@ class Exclusion:
                 f"cannot overlap during season '{self.season}'.")
 
 @dataclass
+@dataclass
 class ScheduleOption:
     """
     Represents one scheduling option for an intervention when started at a specific time.
@@ -97,19 +98,21 @@ class ScheduleOption:
         mean_risk: A list of mean risk values calculated for each timestep for THIS start time across all scenarios. 
                    Only using non-zero risks.
         worst_risk: The highest risk value across all timesteps and scenarios.
+        option_size: The sum of all workload values across all resources and timesteps and multiply by the duration
     """
     start_time: int
     duration: int
     workloads: Dict[str, List[float]]
     risks: List[List[float]]
     mean_risk: List[float] = field(default_factory=list)
-    worst_risk: float = field(default=0.0)  # New attribute for the highest risk
+    worst_risk: float = field(default=0.0)  # Highest risk across timesteps and scenarios
+    option_size: float = field(default=0.0)  # New attribute to store total workload
 
     def __post_init__(self):
         if self.risks:
             self.mean_risk = []
             for timestep_risks in self.risks:
-                # Only consider non-zero risk values
+                # Only consider non-zero risk values.
                 non_zero_risks = [value for value in timestep_risks if value > 0]
                 total_risk = sum(non_zero_risks)
                 total_scenarios = len(non_zero_risks)
@@ -121,7 +124,9 @@ class ScheduleOption:
         else:
             self.mean_risk = []
             self.worst_risk = 0.0
-
+        
+        # Compute option_size by summing all workload values in all lists.
+        self.option_size = sum(sum(workload) for workload in self.workloads.values())*self.duration if self.workloads else 0.0
 
     def __str__(self) -> str:
         # Format workloads using compute_stats (assumed to be defined elsewhere).
@@ -145,7 +150,7 @@ class ScheduleOption:
             "[" + ", ".join(f"{mr:.2f}" for mr in self.mean_risk) + "]"
             if self.mean_risk else "[]"
         )
-        return (f"Schedule Option (start_time={self.start_time}, duration={self.duration}, mean_risk={mean_risk_str}):\n"
+        return (f"Schedule Option (start_time={self.start_time}, duration={self.duration}, mean_risk={mean_risk_str}, option_size={self.option_size}):\n"
                 f"  Workloads:\n    {workloads_str}\n"
                 f"  Risks:\n    {risks_str}")
 
@@ -164,6 +169,7 @@ class Intervention:
     tmax: int
     options: List[ScheduleOption] = field(default_factory=list)
     overall_mean_risk: List[float] = field(init=False, default_factory=list)
+    mean_intervention_size: float = field(init=False, default=0.0)
     
     def add_option(self, option: ScheduleOption):
         if option.start_time > self.tmax:
@@ -199,6 +205,16 @@ class Intervention:
                 overall_means.append(0.0)
         self.overall_mean_risk = overall_means
         return self.overall_mean_risk
+    
+    def compute_mean_intervention_size(self) -> float:
+        """
+        Computes the mean intervention size across all schedule options,
+        averaging only those options where the option_size is not 0.
+        """
+        # Gather sizes from options with non-zero option_size.
+        sizes = [option.option_size for option in self.options if option.option_size > 0]
+        self.mean_intervention_size = sum(sizes) / len(sizes) if sizes else 0.0
+        return self.mean_intervention_size
 
     def __str__(self) -> str:
         # Compute overall_mean_risk if it hasn't been computed yet.
@@ -632,7 +648,7 @@ class Solution:
             # Mark the intervention as active for its duration.
             # Note: timesteps and start times begin at 1; list indices start at 0.
             for t in range(start_time, start_time + matching_option.duration):
-                print(f"Duration: {matching_option.duration}, Start Time: {start_time}, Intervention: {intervention_name}, timestep append: {t}")
+                #print(f"Duration: {matching_option.duration}, Start Time: {start_time}, Intervention: {intervention_name}, timestep append: {t}")
                 if 1 <= t <= instance.T:
                     self.concurrent_interventions[t - 1].append(intervention_name)
         
@@ -846,4 +862,8 @@ if __name__ == "__main__":
 
     print(sol.worst_risks)
 
-
+    # Print mean intervention sizes
+    print("\nIntervention mean sizes:")
+    for intervention in instance.interventions.values():
+        intervention.compute_mean_intervention_size()
+        print(f"{intervention.name}: {intervention.mean_intervention_size:.2f}")
