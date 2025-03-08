@@ -59,10 +59,14 @@ mds_points_gdf["region"] = points_in_regions["NAME_1"].values
 # Create new keys formatted as I1, I2, I3, ...
 # Create new keys by extracting numbers and formatting as I1, I2, etc.
 new_keys = []
+
 for key in keys:
-    # Extract the number from strings like "Intervention_1"
-    num = key.split('_')[1]
-    new_keys.append(f"I{num}")
+    if '_' in key:
+        # Extract the number from strings like "Intervention_1"
+        num = key.split('_')[1]
+        new_keys.append(f"I{num}")
+    else:
+        new_keys.append(key)
 
 
 # Prepare the plot
