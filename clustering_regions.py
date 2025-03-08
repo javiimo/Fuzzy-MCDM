@@ -147,3 +147,44 @@ dist_df = pd.DataFrame(dist_matrix, index=new_keys, columns=new_keys)
 print(dist_df)
 
 
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
+
+# Assume dist_df is already defined with "close", "medium", "far"
+label_to_num = {"close": 0, "medium": 1, "far": 2}
+num_matrix = dist_df.replace(label_to_num).values
+
+# Create a custom colormap
+cmap = mcolors.ListedColormap(["green", "yellow", "red"])
+bounds = [-0.5, 0.5, 1.5, 2.5]
+norm = mcolors.BoundaryNorm(bounds, cmap.N)
+
+plt.figure(figsize=(10, 8))
+sns.heatmap(
+    num_matrix,
+    cmap=cmap,
+    norm=norm,
+    xticklabels=False,  # Remove x labels
+    yticklabels=False,  # Remove y labels
+    cbar=False          # Remove default color bar
+)
+
+# Add a general label instead of specifying each intervention
+plt.xlabel("Interventions")
+plt.ylabel("Interventions")
+
+# Create a simple legend mapping colors to labels
+patches = [
+    mpatches.Patch(color="green",  label="close"),
+    mpatches.Patch(color="yellow", label="medium"),
+    mpatches.Patch(color="red",    label="far")
+]
+plt.legend(handles=patches, bbox_to_anchor=(1.05, 1), loc="upper left", borderaxespad=0.)
+
+plt.title("Distance Matrix Heatmap")
+plt.tight_layout()
+plt.show()
+
+
