@@ -32,6 +32,31 @@ def compute_risk_corr_np(risk1, risk2, alpha=1e-15):
     contributions = sign * similarity
     return np.sum(contributions)
 
+def compute_risk_corr_np2(risk1, risk2, alpha = None):
+    """
+    Computes a modified correlation between two risk series based solely on the sign of their differences.
+    
+    For each pair of consecutive differences:
+      - Adds 1 if both differences are 0 or both are nonzero and have the same sign.
+      - Subtracts 1 if both differences are nonzero and have opposite signs.
+      - Leaves it as 0 if only one of the differences is 0.
+    """
+    diff1 = np.diff(risk1)
+    diff2 = np.diff(risk2)
+    
+    contributions = np.zeros_like(diff1, dtype=float)
+    
+    # Condition: both differences are 0 or both nonzero and have the same sign
+    condition_positive = ((diff1 > 0) & (diff2 > 0)) | ((diff1 < 0) & (diff2 < 0)) | ((diff1 == 0) & (diff2 == 0))
+    contributions[condition_positive] = 1
+    
+    # Condition: both differences are nonzero and have opposite signs
+    condition_negative = (diff1 * diff2 < 0)
+    contributions[condition_negative] = -1
+    
+    # Cases where one diff is 0 and the other nonzero remain 0
+    return np.sum(contributions)
+
 def compute_risk_corr_matrix(instance, alpha=1e-15):
     """
     Computes a normalized correlation matrix from risk series in instance.
@@ -45,7 +70,7 @@ def compute_risk_corr_matrix(instance, alpha=1e-15):
         risk_i = np.array(interventions[keys[i]].overall_mean_risk)
         for j in range(i, n):
             risk_j = np.array(interventions[keys[j]].overall_mean_risk)
-            corr = compute_risk_corr_np(risk_i, risk_j, alpha)
+            corr = compute_risk_corr_np2(risk_i, risk_j, alpha)
             corr_matrix[i, j] = corr
             corr_matrix[j, i] = corr
     norm_corr_matrix = np.zeros_like(corr_matrix)
