@@ -1104,84 +1104,125 @@ class Solution:
             score_mid = max(m - 1, 0)
             self.risk_concurrency += score_high + score_mid
 
+
     def plot_all_concurrency_details(self) -> None:
         """
         Creates informative plots of the concurrency levels of size, environmental impact,
-        risk, and closeness at each timestep. For each attribute, it plots two grouped bar charts
-        (one for the "high" group and one for the "mid" group) across all timesteps.
-        
-        This method assumes that the following per-timestep concurrency lists have already been computed:
-        - Size concurrency: self.big_size_concurrent_interventions, self.mid_size_concurrent_interventions
-        - Environmental impact concurrency: self.high_env_imp_concurrent_interventions, self.mid_env_imp_concurrent_interventions
-        - Risk concurrency: self.high_risk_concurrent_interventions, self.mid_risk_concurrent_interventions
-        - Closeness concurrency: self.close_concurrent_interventions, self.mid_concurrent_interventions
-        
-        The x-axis for all plots represents timesteps.
+        risk, and closeness at each timestep, with background colored boxes indicating the season
+        for each contiguous chunk of timesteps (using self.timestep_to_season).
+
+        For each attribute, two grouped bar charts (one for the "high" group and one for the "mid" group)
+        are plotted in a 2x2 grid of subplots. The background for each subplot is annotated with
+        season labels using the same color palette as in plot_concurrency.
         """
-        # Ensure that concurrency data has been computed.
+        # Ensure that concurrency data is available.
         if not hasattr(self, 'concurrent_interventions'):
             print("Please run compute_concurrency() first to calculate concurrency data.")
             return
-        
+
         T = len(self.concurrent_interventions)
         timesteps = np.arange(1, T + 1)
-        width = 0.35  # width of the bars in the grouped bar chart
+        width = 0.35  # width of the grouped bars
 
-        # Prepare counts for each attribute:
-        size_high = np.array([len(lst) for lst in self.big_size_concurrent_interventions])
-        size_mid  = np.array([len(lst) for lst in self.mid_size_concurrent_interventions])
-        
-        risk_high = np.array([len(lst) for lst in self.high_risk_concurrent_interventions])
-        risk_mid  = np.array([len(lst) for lst in self.mid_risk_concurrent_interventions])
-        
-        env_high  = np.array([len(lst) for lst in self.high_env_imp_concurrent_interventions])
-        env_mid   = np.array([len(lst) for lst in self.mid_env_imp_concurrent_interventions])
-        
+        # Prepare counts for each attribute based on the per-timestep lists.
+        size_high     = np.array([len(lst) for lst in self.big_size_concurrent_interventions])
+        size_mid      = np.array([len(lst) for lst in self.mid_size_concurrent_interventions])
+
+        env_high      = np.array([len(lst) for lst in self.high_env_imp_concurrent_interventions])
+        env_mid       = np.array([len(lst) for lst in self.mid_env_imp_concurrent_interventions])
+
+        risk_high     = np.array([len(lst) for lst in self.high_risk_concurrent_interventions])
+        risk_mid      = np.array([len(lst) for lst in self.mid_risk_concurrent_interventions])
+
         closeness_high = np.array([len(lst) for lst in self.close_concurrent_interventions])
         closeness_mid  = np.array([len(lst) for lst in self.mid_concurrent_interventions])
-        
+
+        # Compute contiguous season intervals from self.timestep_to_season.
+        # Each interval is a tuple: (season, start_timestep, end_timestep)
+        season_intervals = []
+        current_season = None
+        start = None
+        for t in range(1, T + 1):
+            season = self.timestep_to_season.get(t, None)
+            if season != current_season:
+                if current_season is not None:
+                    season_intervals.append((current_season, start, t - 1))
+                current_season = season
+                start = t
+        if current_season is not None:
+            season_intervals.append((current_season, start, T))
+
+        # Define the season color palette (same as in plot_concurrency).
+        color_map = {'winter': 'lightblue', 'summer': 'peachpuff', 'is': 'lightgreen'}
+
+        def add_season_background(ax):
+            """
+            For the given axis, add a background rectangle (using axvspan) for each season interval.
+            The rectangle covers from (start - 0.5) to (end + 0.5) in x-coordinates.
+            Also, adds the season label at the center of the rectangle.
+            """
+            for season, s, e in season_intervals:
+                if season is None:
+                    continue
+                xmin = s - 0.5
+                xmax = e + 0.5
+                # Draw a background rectangle with a low alpha so that the bars remain visible.
+                ax.axvspan(xmin, xmax, facecolor=color_map.get(season, 'gray'), alpha=0.5, zorder=0)
+                # Place the season label in the center of the interval.
+                x_text = (xmin + xmax) / 2
+                ylim = ax.get_ylim()
+                # Position the text near the top of the plotting area.
+                y_text = ylim[1] - (ylim[1] - ylim[0]) * 0.05
+                ax.text(x_text, y_text, season, ha='center', va='top', fontsize=8, color='black', zorder=3)
+
         # Create a 2x2 grid of subplots.
         fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle("Detailed Concurrency Levels per Timestep", fontsize=16)
-        
-        # Plot Size Concurrency (e.g., "big" as high, "mid" as mid).
+        fig.suptitle("Detailed Concurrency Levels per Timestep with Seasons", fontsize=16)
+
+        # Plot Size Concurrency.
         ax = axes[0, 0]
-        ax.bar(timesteps - width/2, size_high, width, label='Big')
-        ax.bar(timesteps + width/2, size_mid, width, label='Mid')
+        ax.bar(timesteps - width/2, size_high, width, label='Big', color='blue', zorder=2)
+        ax.bar(timesteps + width/2, size_mid, width, label='Mid', color='orange', zorder=2)
         ax.set_xlabel("Timestep")
         ax.set_ylabel("Count")
         ax.set_title("Size Concurrency")
-        ax.legend()
-        
+        add_season_background(ax)
+        # Place legend outside the plot area so it doesn't overlap the season text.
+        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0.)
+
         # Plot Environmental Impact Concurrency.
         ax = axes[0, 1]
-        ax.bar(timesteps - width/2, env_high, width, label='High Env Impact')
-        ax.bar(timesteps + width/2, env_mid, width, label='Mid Env Impact')
+        ax.bar(timesteps - width/2, env_high, width, label='High Env Impact', color='blue', zorder=2)
+        ax.bar(timesteps + width/2, env_mid, width, label='Mid Env Impact', color='orange', zorder=2)
         ax.set_xlabel("Timestep")
         ax.set_ylabel("Count")
         ax.set_title("Environmental Impact Concurrency")
-        ax.legend()
-        
+        add_season_background(ax)
+        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0.)
+
         # Plot Risk Concurrency.
         ax = axes[1, 0]
-        ax.bar(timesteps - width/2, risk_high, width, label='High Risk')
-        ax.bar(timesteps + width/2, risk_mid, width, label='Mid Risk')
+        ax.bar(timesteps - width/2, risk_high, width, label='High Risk', color='blue', zorder=2)
+        ax.bar(timesteps + width/2, risk_mid, width, label='Mid Risk', color='orange', zorder=2)
         ax.set_xlabel("Timestep")
         ax.set_ylabel("Count")
         ax.set_title("Risk Concurrency")
-        ax.legend()
-        
+        add_season_background(ax)
+        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0.)
+
         # Plot Closeness Concurrency.
         ax = axes[1, 1]
-        ax.bar(timesteps - width/2, closeness_high, width, label='Close Pairs')
-        ax.bar(timesteps + width/2, closeness_mid, width, label='Mid Pairs')
+        ax.bar(timesteps - width/2, closeness_high, width, label='Close Pairs', color='blue', zorder=2)
+        ax.bar(timesteps + width/2, closeness_mid, width, label='Mid Pairs', color='orange', zorder=2)
         ax.set_xlabel("Timestep")
         ax.set_ylabel("Count")
         ax.set_title("Closeness Concurrency")
-        ax.legend()
-        
-        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        add_season_background(ax)
+        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0.)
+
+        plt.tight_layout(rect=[0, 0, 0.95, 0.96])
         plt.show()
+
 
 
 # ---------------------------
