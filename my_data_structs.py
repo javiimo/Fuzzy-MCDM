@@ -783,30 +783,84 @@ class Solution:
             self.worst_risks.append(worst_risk)
             self.intervention_worst_risk[intervention_name] = worst_risk
 
+    import itertools
+
     def dist_matrix_to_closeness_concurrency(self, dist_mat) -> None:
         """
-        Use self.concurrent_interventions together with the distance matrix (pandas dataframe with col and row names of the intervention taking place and elements with 3 possible values of strings: close, mid, far) to determine the number of simultaneous close interventions taking place at each timestep. Store this into self.close_concurrent_interventions as a list of length T where each element is a list of unique pairs (sets) (notice the symmetry in the distance matrix) of close interventions taking place at that timestep. Do the same analogously for the mid distance into self.mid_concurrent_interventions.
+        Use self.concurrent_interventions together with the distance matrix (pandas dataframe with col and row names
+        of the intervention taking place and elements with 3 possible values of strings: close, mid, far) to determine the
+        number of simultaneous close interventions taking place at each timestep. Store this into 
+        self.close_concurrent_interventions as a list of length T where each element is a list of unique pairs (sets) 
+        (notice the symmetry in the distance matrix) of close interventions taking place at that timestep. Do the same 
+        analogously for the mid distance into self.mid_concurrent_interventions.
         Then compute the self.closeness_concurrency which is a score computed as follows:
             - Each close pair adds 1
             - Each mid pair adds 0.5
         """
-        self.close_concurrent_interventions = ...
-        self.mid_concurrent_interventions = ...
-        self.closeness_concurrency = ...
-        ...
-    
+        # Check if concurrency data is computed.
+        if not hasattr(self, 'concurrent_interventions'):
+            print("Please run compute_concurrency() first to calculate concurrency data")
+            return
+
+        self.close_concurrent_interventions = []
+        self.mid_concurrent_interventions = []
+        self.closeness_concurrency = 0.0
+
+        # Iterate over each timestep's interventions.
+        for interventions in self.concurrent_interventions:
+            close_pairs = []
+            mid_pairs = []
+            # Generate all unique unordered pairs from the interventions active at this timestep.
+            for i, j in itertools.combinations(interventions, 2):
+                # Look up the distance between the pair in the distance matrix.
+                # Assumes the DataFrame has both rows and columns indexed by intervention names.
+                distance = dist_mat.loc[i, j]
+                if distance == "close":
+                    close_pairs.append({i, j})
+                elif distance == "mid":
+                    mid_pairs.append({i, j})
+                # "far" pairs are ignored.
+            self.close_concurrent_interventions.append(close_pairs)
+            self.mid_concurrent_interventions.append(mid_pairs)
+            # Update the overall score: add 1 per close pair and 0.5 per mid pair.
+            self.closeness_concurrency += len(close_pairs) + 0.5 * len(mid_pairs)
+
 
     def environmental_impact_concurrency(self, env_imp_dict) -> None:
         """
-        env_imp_dict is a dictionary of keys: 'high', 'mid', 'low'. And values: lists of intervention names I1, I2, I3,... I want you to create a score that will be saved at self.env_impact which is computed completely analogous to the concurrency of close interventions. Just that this time we do not have pairs, we have just 3 groups, so the variables self.high_env_imp_concurrent_interventions and self.mid_env_imp_concurrent_interventions are just a list of length T where each element is a list containing the intervention names that are high or mid ongoing at that timestep. Finally the env_impact_concurrency will be computed by:
-            Let n and m be the number of concurrent intervention at a given timestep for high and mid respectively:
-                - Add (n-1)**2 to the env_impact_concurrency
-                - Add (m-1) to the env_impact_concurrency
+        env_imp_dict is a dictionary of keys: 'high', 'mid', 'low'. And values: lists of intervention names I1, I2, I3,...
+        Create a score that will be saved at self.env_impact which is computed analogous to the concurrency of close 
+        interventions. This time we do not have pairs, we have just 3 groups. The variables 
+        self.high_env_imp_concurrent_interventions and self.mid_env_imp_concurrent_interventions are created as lists of 
+        length T where each element is a list containing the intervention names that are high or mid ongoing at that 
+        timestep. Finally, the env_impact_concurrency is computed by:
+            Let n and m be the number of concurrent interventions at a given timestep for high and mid respectively:
+                - Add (n-1)**2 to the env_impact_concurrency (only if n > 0, otherwise 0)
+                - Add (m-1) to the env_impact_concurrency (only if m > 0, otherwise 0)
         """
-        self.high_env_imp_concurrent_interventions = ...
-        self.mid_env_imp_concurrent_interventions = ...
-        self.env_impact_concurrency = ...
-        ...
+        # Check if concurrency data is computed.
+        if not hasattr(self, 'concurrent_interventions'):
+            print("Please run compute_concurrency() first to calculate concurrency data")
+            return
+
+        self.high_env_imp_concurrent_interventions = []
+        self.mid_env_imp_concurrent_interventions = []
+        self.env_impact_concurrency = 0.0
+
+        for interventions in self.concurrent_interventions:
+            # Filter interventions for high and mid environmental impact.
+            high_list = [i for i in interventions if i in env_imp_dict.get('high', [])]
+            mid_list = [i for i in interventions if i in env_imp_dict.get('mid', [])]
+            
+            self.high_env_imp_concurrent_interventions.append(high_list)
+            self.mid_env_imp_concurrent_interventions.append(mid_list)
+            
+            n = len(high_list)
+            m = len(mid_list)
+            # Only consider contributions if there is at least one intervention.
+            score_high = (max(n - 1, 0))**2
+            score_mid = max(m - 1, 0)
+            self.env_impact_concurrency += score_high + score_mid
 
 # ---------------------------
 # Example usage:
