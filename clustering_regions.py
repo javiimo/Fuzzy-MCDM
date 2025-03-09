@@ -7,6 +7,8 @@ import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
 from pyproj import Transformer
 
+pd.set_option('future.no_silent_downcasting', True) #The "new" behavior is what pandas will use by default in the future. It stops automatically downcasting your objects to more specific types, so you'll need to be more explicit about type conversion when needed.
+
 def load_french_regions(file_path: str) -> gpd.GeoDataFrame:
     """Load French regions from a GeoJSON file and print basic info."""
     france_gdf = gpd.read_file(file_path)
@@ -90,7 +92,7 @@ def plot_french_map(france_gdf: gpd.GeoDataFrame, points_gdf: gpd.GeoDataFrame, 
 
     # Create a color mapping for each unique region (excluding NaN)
     unique_regions = points_gdf["region"].dropna().unique()
-    cmap = plt.cm.get_cmap('tab20', len(unique_regions))
+    cmap = plt.get_cmap('tab20', len(unique_regions))
     region_color_map = {region: cmap(i) for i, region in enumerate(unique_regions)}
 
     # Plot points by region
@@ -159,7 +161,7 @@ def plot_heatmap(dist_df: pd.DataFrame):
     Colors: green for "close", yellow for "medium", red for "far".
     """
     label_to_num = {"close": 0, "medium": 1, "far": 2}
-    num_matrix = dist_df.replace(label_to_num).values
+    num_matrix = dist_df.replace(label_to_num).values.astype(int)
 
     # Create a custom colormap
     cmap = mcolors.ListedColormap(["green", "yellow", "red"])
@@ -232,34 +234,42 @@ def classify_points_with_parks_and_near(points_gdf: gpd.GeoDataFrame, parks_gdf:
     """
     Classify each intervention point relative to park polygons:
       - 'inside': point is within a park.
-      - 'near': point is not inside, but within a specified distance from a park.
+      - 'near': point is not inside, but within a specified distance (converted to meters) from a park.
       - 'outside': point is neither inside nor near a park.
-    
-    Parameters:
-      near_distance: distance threshold (in degrees for EPSG:4326) to consider a point as "near" a park.
     """
     # Ensure unique indices.
     points_gdf = points_gdf.reset_index(drop=True)
     
     # First, perform spatial join to determine points inside a park.
     joined = gpd.sjoin(points_gdf, parks_gdf[['geometry']], how='left', predicate='within')
-    # Group by original point index: if any joined row is not NaN, mark as inside.
     inside_series = joined.groupby(joined.index)['index_right'].apply(lambda x: x.notna().any())
     
-    # Start with all points marked as 'outside'
+    # Mark all points as 'outside' initially.
     points_gdf['park_status'] = 'outside'
     points_gdf.loc[inside_series[inside_series].index, 'park_status'] = 'inside'
     
     # For points not inside, check if they are "near" any park.
-    union_parks = parks_gdf.unary_union
     mask_outside = points_gdf['park_status'] == 'outside'
-    # Compute distance to the park union for points currently marked as outside.
-    distances = points_gdf.loc[mask_outside].geometry.distance(union_parks)
-    # If the distance is below near_distance, mark the point as 'near'.
-    near_mask = distances < near_distance
+    
+    # Convert near_distance from degrees to meters.
+    near_distance_meters = degrees_to_meters(near_distance)
+    
+    # Reproject points and parks to a projected CRS (EPSG:3857) for accurate distance calculations.
+    points_projected = points_gdf.to_crs(epsg=3857)
+    parks_projected = parks_gdf.to_crs(epsg=3857)
+    
+    # Use union_all() instead of the deprecated unary_union.
+    union_parks_projected = parks_projected.union_all()
+    
+    # Compute distances in meters.
+    distances = points_projected.loc[mask_outside].geometry.distance(union_parks_projected)
+    
+    # Mark points as 'near' if within the converted threshold.
+    near_mask = distances < near_distance_meters
     points_gdf.loc[mask_outside, 'park_status'] = np.where(near_mask, 'near', 'outside')
     
     return points_gdf
+
 
 def plot_points_with_parks(france_gdf: gpd.GeoDataFrame, parks_gdf: gpd.GeoDataFrame,
                            points_gdf: gpd.GeoDataFrame, new_keys: list, near_distance=0.05):
