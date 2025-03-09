@@ -545,6 +545,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         print(f"Finished loading options for intervention {intv_name}.")
         # Compute the overall mean risks list once all options are added.
         intervention.compute_overall_mean_risk()
+        intervention.compute_mean_intervention_size()
 
         try:
             instance.add_intervention(intervention)
@@ -862,6 +863,9 @@ class Solution:
             score_mid = max(m - 1, 0)
             self.env_impact_concurrency += score_high + score_mid
 
+    def compute_size_concurrency(self, instance) -> None:
+        ...
+
 # ---------------------------
 # Example usage:
 # ---------------------------
@@ -941,7 +945,7 @@ if __name__ == "__main__":
     print(sol.worst_risks)
 
     # Print mean intervention sizes
-    print("\nIntervention mean sizes:")
-    for intervention in instance.interventions.values():
-        intervention.compute_mean_intervention_size()
-        print(f"{intervention.name}: {intervention.mean_intervention_size:.2f}")
+    # print("\nIntervention mean sizes:")
+    # for intervention in instance.interventions.values():
+    #     intervention.compute_mean_intervention_size()
+    #     print(f"{intervention.name}: {intervention.mean_intervention_size:.2f}")
