@@ -3,6 +3,7 @@ import statistics
 from dataclasses import dataclass, field
 from typing import List, Dict, Any
 import logging
+import itertools
 
 # Set up the logger for errors and warnings
 logger = logging.getLogger("error_logger")
@@ -782,7 +783,30 @@ class Solution:
             self.worst_risks.append(worst_risk)
             self.intervention_worst_risk[intervention_name] = worst_risk
 
+    def dist_matrix_to_closeness_concurrency(self, dist_mat) -> None:
+        """
+        Use self.concurrent_interventions together with the distance matrix (pandas dataframe with col and row names of the intervention taking place and elements with 3 possible values of strings: close, mid, far) to determine the number of simultaneous close interventions taking place at each timestep. Store this into self.close_concurrent_interventions as a list of length T where each element is a list of unique pairs (sets) (notice the symmetry in the distance matrix) of close interventions taking place at that timestep. Do the same analogously for the mid distance into self.mid_concurrent_interventions.
+        Then compute the self.closeness_concurrency which is a score computed as follows:
+            - Each close pair adds 1
+            - Each mid pair adds 0.5
+        """
+        self.close_concurrent_interventions = ...
+        self.mid_concurrent_interventions = ...
+        self.closeness_concurrency = ...
+        ...
+    
 
+    def environmental_impact_concurrency(self, env_imp_dict) -> None:
+        """
+        env_imp_dict is a dictionary of keys: 'high', 'mid', 'low'. And values: lists of intervention names I1, I2, I3,... I want you to create a score that will be saved at self.env_impact which is computed completely analogous to the concurrency of close interventions. Just that this time we do not have pairs, we have just 3 groups, so the variables self.high_env_imp_concurrent_interventions and self.mid_env_imp_concurrent_interventions are just a list of length T where each element is a list containing the intervention names that are high or mid ongoing at that timestep. Finally the env_impact_concurrency will be computed by:
+            Let n and m be the number of concurrent intervention at a given timestep for high and mid respectively:
+                - Add (n-1)**2 to the env_impact_concurrency
+                - Add (m-1) to the env_impact_concurrency
+        """
+        self.high_env_imp_concurrent_interventions = ...
+        self.mid_env_imp_concurrent_interventions = ...
+        self.env_impact_concurrency = ...
+        ...
 
 # ---------------------------
 # Example usage:
