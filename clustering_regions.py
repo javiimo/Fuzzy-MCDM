@@ -450,7 +450,7 @@ def main():
     plot_points_with_parks(france_gdf, parks_gdf, points_gdf, new_keys, near_distance=near_threshold)
 
 if __name__ == "__main__":
-    #main()
+    main()
     dist_matrix_df = get_distance_matrix("points.npy", "points_keys.npy")
     print(dist_matrix_df)
 
