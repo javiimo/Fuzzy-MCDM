@@ -299,6 +299,113 @@ def plot_points_with_parks(france_gdf: gpd.GeoDataFrame, parks_gdf: gpd.GeoDataF
     ax.set_title("Interventions Classified by Proximity to National Parks")
     plt.show()
 
+def get_distance_matrix(points_file: str, keys_file: str) -> pd.DataFrame:
+    """
+    Given the file paths to intervention points (a numpy file with shape (n_points, 2))
+    and intervention keys (a numpy file), this function returns a fuzzy distance matrix.
+    
+    The matrix is labeled with:
+      - "close" if two interventions are in the same region,
+      - "mid" if they are in adjacent regions, and
+      - "far" otherwise.
+      
+    It loads French regions from "france.json" and uses existing helper functions
+    for scaling, spatial joining, and region adjacency.
+    """
+    # Load French regions and interventions.
+    france_gdf = load_french_regions("france.json")
+    points, keys = load_points_and_keys(points_file, keys_file)
+    
+    # Scale points and create a GeoDataFrame.
+    x_scaled, y_scaled = scale_points(points, france_gdf)
+    points_gdf = create_points_geodf(x_scaled, y_scaled, france_gdf.crs)
+    
+    # Assign each point to a region.
+    points_gdf = assign_regions(points_gdf, france_gdf)
+    
+    # Format the intervention keys (e.g., "Intervention_1" becomes "I1").
+    new_keys = format_keys(keys)
+    
+    # Compute region adjacency.
+    region_adjacency = compute_region_adjacency(france_gdf)
+    
+    # Build the fuzzy distance matrix.
+    n = len(new_keys)
+    dist_matrix = np.empty((n, n), dtype=object)
+    intervention_regions = points_gdf["region"].tolist()
+    
+    for i in range(n):
+        region_i = intervention_regions[i]
+        for j in range(n):
+            region_j = intervention_regions[j]
+            if pd.isna(region_i) or pd.isna(region_j):
+                dist_matrix[i, j] = "far"
+            else:
+                if region_i == region_j:
+                    dist_matrix[i, j] = "close"
+                elif region_j in region_adjacency.get(region_i, set()):
+                    dist_matrix[i, j] = "mid"  # Using "mid" as requested.
+                else:
+                    dist_matrix[i, j] = "far"
+    
+    # Create and return the DataFrame with intervention keys as index and columns.
+    dist_df = pd.DataFrame(dist_matrix, index=new_keys, columns=new_keys)
+    return dist_df
+
+
+def classify_interventions_by_park(points_file: str, keys_file: str, near_distance: float = 0.05) -> dict:
+    """
+    Given the file paths to intervention points and keys, this function classifies each 
+    intervention relative to park polygons (loaded from "geojsons_nat_parks/pnr_polygon.csv")
+    into three groups:
+    
+      - "high": interventions that are inside a park,
+      - "mid": interventions that are near (within near_distance) a park, and
+      - "low": interventions that are outside a park.
+    
+    The function returns a dictionary with these three keys and values as lists of 
+    formatted intervention names (e.g., I1, I2, I3, ...).
+    """
+    # Load French regions and interventions.
+    france_gdf = load_french_regions("france.json")
+    points, keys = load_points_and_keys(points_file, keys_file)
+    
+    # Scale points and create GeoDataFrame.
+    x_scaled, y_scaled = scale_points(points, france_gdf)
+    points_gdf = create_points_geodf(x_scaled, y_scaled, france_gdf.crs)
+    
+    # Format intervention keys.
+    new_keys = format_keys(keys)
+    
+    # Load park polygons and reproject to France's CRS.
+    df = pd.read_csv("geojsons_nat_parks/pnr_polygon.csv")
+    df["geometry"] = df["the_geom"].apply(wkt.loads)
+    parks_gdf = gpd.GeoDataFrame(df, geometry="geometry")
+    parks_gdf.crs = "EPSG:3857"
+    parks_gdf = parks_gdf.to_crs(france_gdf.crs)
+    
+    # Classify each intervention point relative to the parks.
+    points_gdf = classify_points_with_parks_and_near(points_gdf, parks_gdf, near_distance=near_distance)
+    
+    # Build the classification dictionary:
+    #   - "high": points inside a park,
+    #   - "mid": points near a park,
+    #   - "low": points outside a park.
+    classification = {"high": [], "mid": [], "low": []}
+    
+    for key, status in zip(new_keys, points_gdf["park_status"]):
+        if status == "inside":
+            classification["high"].append(key)
+        elif status == "near":
+            classification["mid"].append(key)
+        else:
+            classification["low"].append(key)
+    
+    return classification
+
+
+
+
 def main():
     # Load French regions and intervention points.
     france_gdf = load_french_regions("france.json")
@@ -343,4 +450,9 @@ def main():
     plot_points_with_parks(france_gdf, parks_gdf, points_gdf, new_keys, near_distance=near_threshold)
 
 if __name__ == "__main__":
-    main()
+    #main()
+    dist_matrix_df = get_distance_matrix("points.npy", "points_keys.npy")
+    print(dist_matrix_df)
+
+    intervention_groups = classify_interventions_by_park("points.npy", "points_keys.npy", near_distance=0.05)
+    print(intervention_groups)
