@@ -782,8 +782,8 @@ class Solution:
             worst_risk = matching_option.worst_risk
             self.worst_risks.append(worst_risk)
             self.intervention_worst_risk[intervention_name] = worst_risk
-
-    import itertools
+        
+        self.highest_risk = max(self.worst_risks) #!Maybe it is better to take the mean value?
 
     def dist_matrix_to_closeness_concurrency(self, dist_mat) -> None:
         """
@@ -913,7 +913,7 @@ if __name__ == "__main__":
     instance = load_instance_from_json(data)
 
     #print(instance.interventions.get("I135").name)
-    print(f"# interventions: {len(instance.interventions)}")
+    #print(f"# interventions: {len(instance.interventions)}")
 
     # Print the instance with detailed metrics.
     #instance.show()
