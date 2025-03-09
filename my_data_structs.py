@@ -4,6 +4,14 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any
 import logging
 import itertools
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.cluster import KMeans
+
+
+####################################################
+# Auxiliary functions
+####################################################
 
 # Set up the logger for errors and warnings
 logger = logging.getLogger("error_logger")
@@ -35,6 +43,155 @@ def trim_list(lst: List[Any]) -> str:
     if len(lst) > 20:
         return str(lst[:20]) + " ... (total: " + str(len(lst)) + " elements)"
     return str(lst)
+
+
+######################################################
+#               Clustering Functions
+######################################################
+
+def cluster_by_attribute(values: List[float], names: List[str], labels: List[str]) -> Dict[str, List[str]]:
+    """
+    Generic clustering function that applies k-means (k=3) to 1D values,
+    and maps the clusters (in ascending order of centroid value) to the provided labels.
+    
+    Additionally, prints the centroid value for each cluster label.
+    
+    Args:
+        values: A list of one-dimensional real values.
+        names: A list of instance names corresponding to the values.
+        labels: A list of 3 cluster labels ordered from smallest to largest.
+                e.g. for sizes: ['small', 'mid', 'big'], for risk: ['low', 'mid', 'high'].
+                
+    Returns:
+        A dictionary mapping each label to the list of instance names assigned to that cluster.
+    """
+    data = np.array(values).reshape(-1, 1)
+    kmeans = KMeans(n_clusters=3, random_state=42)
+    cluster_ids = kmeans.fit_predict(data)
+    centroids = kmeans.cluster_centers_.flatten()
+    
+    # Determine mapping: smallest centroid gets labels[0], etc.
+    sorted_cluster_ids = np.argsort(centroids)
+    cluster_label_mapping = {cluster_id: labels[idx] for idx, cluster_id in enumerate(sorted_cluster_ids)}
+    
+    # Informative print of the centroids for each label.
+    print("Cluster centroids:")
+    for idx, label in enumerate(labels):
+        centroid_value = centroids[sorted_cluster_ids[idx]]
+        print(f"  {label}: {centroid_value:.4f}")
+    
+    # Build the result dictionary.
+    result: Dict[str, List[str]] = {label: [] for label in labels}
+    for name, cluster_id in zip(names, cluster_ids):
+        result[cluster_label_mapping[cluster_id]].append(name)
+        
+    return result
+
+def plot_clustering_heatmap(cluster_dict: Dict[str, List[str]]) -> None:
+    """
+    Plots a heatmap for the clustering result contained in cluster_dict.
+    The input dictionary has cluster labels as keys and lists of instance names as values.
+    The function creates a one-row heatmap where each cell's color corresponds to the cluster assignment.
+    
+    Args:
+        cluster_dict: A dictionary mapping cluster labels (e.g., 'small', 'mid', 'big')
+                      to a list of instance names in that cluster.
+    """
+    # Determine the order of clusters. Assuming the keys are in the desired order,
+    # e.g., for sizes: ['small', 'mid', 'big'] or for risk: ['low', 'mid', 'high'].
+    cluster_order = list(cluster_dict.keys())
+    
+    # Create lists for cluster assignments and corresponding intervention names.
+    assignments = []
+    names = []
+    for idx, cluster_label in enumerate(cluster_order):
+        for name in cluster_dict[cluster_label]:
+            assignments.append(idx)
+            names.append(name)
+            
+    # Create a 2D array for heatmap: one row with a cell per intervention.
+    data = np.array(assignments).reshape(1, -1)
+    
+    # Create the heatmap.
+    fig, ax = plt.subplots(figsize=(max(8, len(names)*0.5), 2))
+    cax = ax.imshow(data, aspect="auto", cmap="viridis")
+    
+    # Set ticks on x-axis for each intervention.
+    ax.set_xticks(range(len(names)))
+    ax.set_xticklabels(names, rotation=90, fontsize=8)
+    # One y-tick for the single row.
+    ax.set_yticks([0])
+    ax.set_yticklabels([""])
+    
+    # Create a colorbar with ticks corresponding to the cluster indices.
+    cbar = fig.colorbar(cax, ax=ax, ticks=range(len(cluster_order)))
+    cbar.ax.set_yticklabels(cluster_order)
+    
+    ax.set_title("Interventions Clustering Heatmap")
+    plt.tight_layout()
+    plt.show()
+
+def cluster_interventions_by_size(instance) -> Dict[str, List[str]]:
+    """
+    Clusters the interventions in the maintenance scheduling instance based on mean intervention size.
+    Uses labels 'small', 'mid', 'big' for clusters.
+    
+    Args:
+        instance: A MaintenanceSchedulingInstance with interventions.
+    
+    Returns:
+        A dictionary mapping the cluster label to the list of intervention names.
+    """
+    names = []
+    sizes = []
+    for intervention in instance.interventions.values():
+        # Ensure the mean size is computed.
+        size = intervention.mean_intervention_size
+        if size == 0.0:
+            size = intervention.compute_mean_intervention_size()
+        names.append(intervention.name)
+        sizes.append(size)
+        
+    # For sizes: smallest value -> "small", largest -> "big".
+    print("Cluster by size centroids:")
+    return cluster_by_attribute(sizes, names, ['small', 'mid', 'big'])
+
+def cluster_interventions_by_risk(instance) -> Dict[str, List[str]]:
+    """
+    Clusters the interventions in the maintenance scheduling instance based on average overall risk.
+    Uses labels 'low', 'mid', 'high' for clusters.
+    
+    Args:
+        instance: A MaintenanceSchedulingInstance with interventions.
+    
+    Returns:
+        A dictionary mapping the cluster label to the list of intervention names.
+    """
+    names = []
+    avg_risks = []
+    for intervention in instance.interventions.values():
+        # Compute overall mean risk if needed.
+        if not intervention.overall_mean_risk:
+            intervention.compute_overall_mean_risk()
+        # Calculate average risk (avoiding division by zero).
+        if intervention.overall_mean_risk:
+            avg_risk = sum(intervention.overall_mean_risk) / len(intervention.overall_mean_risk)
+        else:
+            avg_risk = 0.0
+        names.append(intervention.name)
+        avg_risks.append(avg_risk)
+    
+    # For risk: lowest value -> "low", highest -> "high".
+    print("Cluster by risk centroids:")
+    return cluster_by_attribute(avg_risks, names, ['low', 'mid', 'high'])
+
+
+
+
+######################################################
+#           Data Classes
+######################################################
+
 
 @dataclass
 class Resource:
@@ -656,6 +813,7 @@ class Solution:
         
         # Define concurrency as the number of interventions active at each timestep.
         self.concurrency = [len(interventions) for interventions in self.concurrent_interventions]
+        self.highest_concurrency = max(self.concurrency)
     
     def compute_seansonality(self, instance: MaintenanceSchedulingInstance) -> None:
         """
@@ -721,8 +879,6 @@ class Solution:
         if not hasattr(self, 'concurrency'):
             print("Please run compute_concurrency() first to calculate concurrency data")
             return
-
-        import matplotlib.pyplot as plt
         
         # If season data is available, assign colors based on season; otherwise, use a default.
         if not (hasattr(self, 'season_interventions') and hasattr(self, 'timestep_to_season')):
@@ -827,7 +983,7 @@ class Solution:
             self.closeness_concurrency += len(close_pairs) + 0.5 * len(mid_pairs)
 
 
-    def environmental_impact_concurrency(self, env_imp_dict) -> None:
+    def compute_environmental_impact_concurrency(self, env_imp_dict) -> None:
         """
         env_imp_dict is a dictionary of keys: 'high', 'mid', 'low'. And values: lists of intervention names I1, I2, I3,...
         Create a score that will be saved at self.env_impact which is computed analogous to the concurrency of close 
@@ -863,8 +1019,170 @@ class Solution:
             score_mid = max(m - 1, 0)
             self.env_impact_concurrency += score_high + score_mid
 
-    def compute_size_concurrency(self, instance) -> None:
-        ...
+    def compute_size_concurrency(self, instance: MaintenanceSchedulingInstance) -> None:
+        """
+        Computes size concurrency for the solution based on the clustering of interventions by mean size.
+        
+        It uses the cluster_interventions_by_size function (with labels 'small', 'mid', 'big') to
+        determine which interventions are in the 'big' and 'mid' clusters.
+        For each timestep, the score is computed as:
+            - (n-1)**2 for interventions in the 'big' cluster (only if n > 0)
+            - (m-1) for interventions in the 'mid' cluster (only if m > 0)
+        The per-timestep lists are stored in self.big_size_concurrent_interventions and 
+        self.mid_size_concurrent_interventions, and the overall score in self.size_concurrency.
+        
+        Args:
+            instance (MaintenanceSchedulingInstance): The instance containing the interventions.
+        """
+        # Ensure concurrency data is available.
+        if not hasattr(self, 'concurrent_interventions'):
+            print("Please run compute_concurrency() first to calculate concurrency data")
+            return
+
+        # Compute clustering dictionary for sizes (keys: 'small', 'mid', 'big')
+        size_clusters = cluster_interventions_by_size(instance)
+
+        self.big_size_concurrent_interventions = []
+        self.mid_size_concurrent_interventions = []
+        self.size_concurrency = 0.0
+
+        for interventions in self.concurrent_interventions:
+            # Filter interventions that are in the 'big' and 'mid' clusters.
+            big_list = [i for i in interventions if i in size_clusters.get('big', [])]
+            mid_list = [i for i in interventions if i in size_clusters.get('mid', [])]
+            
+            self.big_size_concurrent_interventions.append(big_list)
+            self.mid_size_concurrent_interventions.append(mid_list)
+            
+            n = len(big_list)
+            m = len(mid_list)
+            # Score: (n-1)**2 for big and (m-1) for mid (only if count > 0)
+            score_big = (max(n - 1, 0))**2
+            score_mid = max(m - 1, 0)
+            self.size_concurrency += score_big + score_mid
+
+
+    def compute_risk_concurrency(self, instance: MaintenanceSchedulingInstance) -> None:
+        """
+        Computes risk concurrency for the solution based on the clustering of interventions by average risk.
+        
+        It uses the cluster_interventions_by_risk function (with labels 'low', 'mid', 'high') to
+        determine which interventions fall into the 'high' and 'mid' risk clusters.
+        For each timestep, the score is computed as:
+            - (n-1)**2 for interventions in the 'high' cluster (only if n > 0)
+            - (m-1) for interventions in the 'mid' cluster (only if m > 0)
+        The per-timestep lists are stored in self.high_risk_concurrent_interventions and 
+        self.mid_risk_concurrent_interventions, and the overall score in self.risk_concurrency.
+        
+        Args:
+            instance (MaintenanceSchedulingInstance): The instance containing the interventions.
+        """
+        # Ensure concurrency data is available.
+        if not hasattr(self, 'concurrent_interventions'):
+            print("Please run compute_concurrency() first to calculate concurrency data")
+            return
+
+        # Compute clustering dictionary for risks (keys: 'low', 'mid', 'high')
+        risk_clusters = cluster_interventions_by_risk(instance)
+
+        self.high_risk_concurrent_interventions = []
+        self.mid_risk_concurrent_interventions = []
+        self.risk_concurrency = 0.0
+
+        for interventions in self.concurrent_interventions:
+            # Filter interventions that are in the 'high' and 'mid' risk clusters.
+            high_list = [i for i in interventions if i in risk_clusters.get('high', [])]
+            mid_list = [i for i in interventions if i in risk_clusters.get('mid', [])]
+            
+            self.high_risk_concurrent_interventions.append(high_list)
+            self.mid_risk_concurrent_interventions.append(mid_list)
+            
+            n = len(high_list)
+            m = len(mid_list)
+            # Score: (n-1)**2 for high and (m-1) for mid (only if count > 0)
+            score_high = (max(n - 1, 0))**2
+            score_mid = max(m - 1, 0)
+            self.risk_concurrency += score_high + score_mid
+
+    def plot_all_concurrency_details(self) -> None:
+        """
+        Creates informative plots of the concurrency levels of size, environmental impact,
+        risk, and closeness at each timestep. For each attribute, it plots two grouped bar charts
+        (one for the "high" group and one for the "mid" group) across all timesteps.
+        
+        This method assumes that the following per-timestep concurrency lists have already been computed:
+        - Size concurrency: self.big_size_concurrent_interventions, self.mid_size_concurrent_interventions
+        - Environmental impact concurrency: self.high_env_imp_concurrent_interventions, self.mid_env_imp_concurrent_interventions
+        - Risk concurrency: self.high_risk_concurrent_interventions, self.mid_risk_concurrent_interventions
+        - Closeness concurrency: self.close_concurrent_interventions, self.mid_concurrent_interventions
+        
+        The x-axis for all plots represents timesteps.
+        """
+        # Ensure that concurrency data has been computed.
+        if not hasattr(self, 'concurrent_interventions'):
+            print("Please run compute_concurrency() first to calculate concurrency data.")
+            return
+        
+        T = len(self.concurrent_interventions)
+        timesteps = np.arange(1, T + 1)
+        width = 0.35  # width of the bars in the grouped bar chart
+
+        # Prepare counts for each attribute:
+        size_high = np.array([len(lst) for lst in self.big_size_concurrent_interventions])
+        size_mid  = np.array([len(lst) for lst in self.mid_size_concurrent_interventions])
+        
+        risk_high = np.array([len(lst) for lst in self.high_risk_concurrent_interventions])
+        risk_mid  = np.array([len(lst) for lst in self.mid_risk_concurrent_interventions])
+        
+        env_high  = np.array([len(lst) for lst in self.high_env_imp_concurrent_interventions])
+        env_mid   = np.array([len(lst) for lst in self.mid_env_imp_concurrent_interventions])
+        
+        closeness_high = np.array([len(lst) for lst in self.close_concurrent_interventions])
+        closeness_mid  = np.array([len(lst) for lst in self.mid_concurrent_interventions])
+        
+        # Create a 2x2 grid of subplots.
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        fig.suptitle("Detailed Concurrency Levels per Timestep", fontsize=16)
+        
+        # Plot Size Concurrency (e.g., "big" as high, "mid" as mid).
+        ax = axes[0, 0]
+        ax.bar(timesteps - width/2, size_high, width, label='Big')
+        ax.bar(timesteps + width/2, size_mid, width, label='Mid')
+        ax.set_xlabel("Timestep")
+        ax.set_ylabel("Count")
+        ax.set_title("Size Concurrency")
+        ax.legend()
+        
+        # Plot Environmental Impact Concurrency.
+        ax = axes[0, 1]
+        ax.bar(timesteps - width/2, env_high, width, label='High Env Impact')
+        ax.bar(timesteps + width/2, env_mid, width, label='Mid Env Impact')
+        ax.set_xlabel("Timestep")
+        ax.set_ylabel("Count")
+        ax.set_title("Environmental Impact Concurrency")
+        ax.legend()
+        
+        # Plot Risk Concurrency.
+        ax = axes[1, 0]
+        ax.bar(timesteps - width/2, risk_high, width, label='High Risk')
+        ax.bar(timesteps + width/2, risk_mid, width, label='Mid Risk')
+        ax.set_xlabel("Timestep")
+        ax.set_ylabel("Count")
+        ax.set_title("Risk Concurrency")
+        ax.legend()
+        
+        # Plot Closeness Concurrency.
+        ax = axes[1, 1]
+        ax.bar(timesteps - width/2, closeness_high, width, label='Close Pairs')
+        ax.bar(timesteps + width/2, closeness_mid, width, label='Mid Pairs')
+        ax.set_xlabel("Timestep")
+        ax.set_ylabel("Count")
+        ax.set_title("Closeness Concurrency")
+        ax.legend()
+        
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.show()
+
 
 # ---------------------------
 # Example usage:
