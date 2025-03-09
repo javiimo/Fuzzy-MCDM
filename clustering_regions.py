@@ -2,7 +2,6 @@ import geopandas as gpd
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from shapely.geometry import Point
 from shapely import wkt
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
