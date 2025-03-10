@@ -319,12 +319,17 @@ def compute_and_save_embedding(instance, alpha, distance_method, points_file, ma
     title = f"Weighted MDS (α={alpha}, d_method={distance_method})"
     plot_embedding(points, title, keys)
     
-    # Save both the embedding points and intervention keys
-    np.save(points_file, points)
-    keys_file = points_file.replace('.npy', '_keys.npy')
-    np.save(keys_file, np.array(keys))
-    print(f"Embedding points saved to: {points_file}")
-    print(f"Intervention keys saved to: {keys_file}")
+    # Add timestamp to filenames
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    points_file_ts = points_file.replace('.npy', f'_{timestamp}.npy')
+    keys_file_ts = points_file.replace('.npy', f'_keys_{timestamp}.npy')
+    
+    # Save both the embedding points and intervention keys with timestamps
+    np.save(points_file_ts, points)
+    np.save(keys_file_ts, np.array(keys))
+    print(f"Embedding points saved to: {points_file_ts}")
+    print(f"Intervention keys saved to: {keys_file_ts}")
     
     return points, weighted_stress, keys
 
@@ -380,7 +385,7 @@ def matrix_statistics(matrix):
 # Main Execution Example
 # -------------------------------
 if __name__ == "__main__":
-    json_path = 'Decision Matrix/Problem setups/C_01.json'
+    json_path = 'Decision Matrix/Problem setups/C_10.json'
     with open(json_path, "r") as f:
         data = json.load(f)
     instance = load_instance_from_json(data)
@@ -408,5 +413,5 @@ if __name__ == "__main__":
     points_file = "points.npy"  # Define the file path to save the embedding points
     alpha = alpha_values[0]  # Use the first (and only) alpha value
     distance_method = distance_methods[0]  # Use the first (and only) distance method
-    #points, weighted_stress = compute_and_save_embedding(instance, alpha, distance_method, points_file, mat_stats=True)
+    points, weighted_stress = compute_and_save_embedding(instance, alpha, distance_method, points_file, mat_stats=True)
     #print("Computed embedding points and weighted stress saved.")
