@@ -44,7 +44,7 @@ def compute_intervention_difference_matrix(solutions: List[Solution], plot: bool
     
     return matrix
 
-def build_DM_matrix(instance_path, solutions_paths, plots=True):
+def build_DM_matrix(instance_path, solutions_paths, points = "points.npy", point_keys = "points_keys.npy", plots=True):
     """
     Build the Decision Matrix (DM Matrix) for evaluating maintenance scheduling alternatives.
     
@@ -79,8 +79,8 @@ def build_DM_matrix(instance_path, solutions_paths, plots=True):
     solutions = [Solution(sol_path) for sol_path in solutions_paths]
 
     # Instance-level computations.
-    dist_matrix_df = get_distance_matrix("points.npy", "points_keys.npy")  # DataFrame with values: "close", "mid", "far"
-    envirnomental_risk_groups = classify_interventions_by_park("points.npy", "points_keys.npy", near_distance=0.05)  # dict with keys: high, mid, low
+    dist_matrix_df = get_distance_matrix(points, point_keys)  # DataFrame with values: "close", "mid", "far"
+    envirnomental_risk_groups = classify_interventions_by_park(points, point_keys, near_distance=0.05)  # dict with keys: high, mid, low
 
     # Compute all metrics for each solution.
     for sol in solutions:
@@ -99,7 +99,7 @@ def build_DM_matrix(instance_path, solutions_paths, plots=True):
             sol.plot_all_concurrency_details()
 
     print("Plotting the differences between solutions in a heatmap...")
-    mat = compute_intervention_difference_matrix(solutions, plot = True)
+    mat = compute_intervention_difference_matrix(solutions, plot = True) #This is the similarity between sols matrix
 
     # Build the DM Matrix as a list of dictionaries.
     alternatives = []
@@ -137,7 +137,10 @@ def main():
         r'Decision Matrix\Alternatives\1\solution_C_01_900.txt',
         r'Decision Matrix\Alternatives\2\C_01_15min.txt'
     ]
-    DM_matrix = build_DM_matrix(instance_path, solutions_paths, plots = False)
+    points = "points.npy"
+    point_keys = "points_keys.npy"
+
+    DM_matrix = build_DM_matrix(instance_path, solutions_paths, points, point_keys, plots = False)
     print(f"\nDECISION MAKING MATRIX:\n")
     # Create a figure and axis with larger size for better readability
     plt.figure(figsize=(12, 6))
