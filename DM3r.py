@@ -408,10 +408,10 @@ if __name__ == "__main__":
     ]
     
     # Run the testing function using weighted MDS (via R's SMACOF)
-    results = test_embeddings(instance, alpha_values, distance_methods, plot=True, top_n=5, mat_stats=True)
+    #results = test_embeddings(instance, alpha_values, distance_methods, plot=True, top_n=5, mat_stats=True)
 
     points_file = "points.npy"  # Define the file path to save the embedding points
     alpha = alpha_values[0]  # Use the first (and only) alpha value
     distance_method = distance_methods[0]  # Use the first (and only) distance method
-    points, weighted_stress = compute_and_save_embedding(instance, alpha, distance_method, points_file, mat_stats=True)
+    points, weighted_stress, keys = compute_and_save_embedding(instance, alpha, distance_method, points_file, mat_stats=True)
     #print("Computed embedding points and weighted stress saved.")
