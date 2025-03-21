@@ -132,13 +132,13 @@ def build_DM_matrix(instance_path, solutions_paths, points = "points.npy", point
 
 
 def main():
-    instance_path = r'Decision Matrix\Problem setups\C_01.json'
+    instance_path = r'Decision Matrix\Problem setups\C_10.json'
     solutions_paths = [
-        r'Decision Matrix\Alternatives\1\solution_C_01_900.txt',
-        r'Decision Matrix\Alternatives\2\C_01_15min.txt'
+        r'Decision Matrix\Alternatives\1\solution_C_10_900.txt',
+        r'Decision Matrix\Alternatives\2\C_10_15min.txt'
     ]
-    points = "points.npy"
-    point_keys = "points_keys.npy"
+    points = "points_20250310_123528.npy"
+    point_keys = "points_keys_20250310_123528.npy"
 
     DM_matrix = build_DM_matrix(instance_path, solutions_paths, points, point_keys, plots = False)
     print(f"\nDECISION MAKING MATRIX:\n")
