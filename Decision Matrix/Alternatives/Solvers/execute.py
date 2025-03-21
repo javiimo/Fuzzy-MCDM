@@ -1,82 +1,107 @@
-#!/usr/bin/env python3
+# WARNING:
+# This code uses windows subsystem linux to run the solvers since they were built for debian 10. It shouldn't be difficult to adapt it to run just for regular linux. Paths would need to be adapted to run on a new computer. 
+# The problem with wsl is that the hostid changes from time to time, so that is why we would need to frequently create new keys.
+
 import os
 import subprocess
 
-def main():
-    # Define the shell script lines
-    script_lines = []
-    
-    # --- Environment Initialization ---
-    script_lines.append("#!/bin/bash")
-    script_lines.append("export LD_LIBRARY_PATH=/mnt/c/Users/javym/Documents/Github/TFGs/Premio1/rc/gurobi910/linux64/lib:$LD_LIBRARY_PATH")
-    script_lines.append("export PATH=/mnt/c/Users/javym/Documents/Github/TFGs/Premio1/rc/gurobi910/linux64/bin:$PATH")
-    script_lines.append("echo 'Initializing grbgetkey...'")
-    script_lines.append("grbgetkey 58e1ed98-92fb-4bf9-afd3-fbc717c34a77")
-    script_lines.append("")
-    
-    # --- Problem Definition ---
-    # Change the problem name here (e.g., "X_15" or "C_01")
-    script_lines.append("problem=X_15")
-    script_lines.append("")
-    
-    # --- Parameter Lists ---
-    # Define the t values and seeds
-    script_lines.append("t_list=(20 100 120)")
-    script_lines.append("seeds=(42 40 45 10 99)")
-    script_lines.append("")
-    
-    # --- Command Execution ---
-    script_lines.append("for t in \"${t_list[@]}\"; do")
-    script_lines.append("  for seed in \"${seeds[@]}\"; do")
-    # Team1 command (uses problem.json)
-    script_lines.append("    echo \"Executing Team1 for t=$t, seed=$seed\"")
-    script_lines.append("    ./team1 -t $t -p ${problem}.json -o sol${t}_t1_${problem}_s${seed}.txt -name Team1 -s $seed")
-    # Team3 command (uses problem without .json)
-    script_lines.append("    echo \"Executing Team3 for t=$t, seed=$seed\"")
-    script_lines.append("    ./team3 -t $t -p $problem -o sol${t}_t3_${problem}_s${seed}.txt -name Team3 -s $seed")
-    # Team5 command (uses problem.json)
-    script_lines.append("    echo \"Executing Team5 for t=$t, seed=$seed\"")
-    script_lines.append("    ./team5 -t $t -p ${problem}.json -o sol${t}_t5_${problem}_s${seed}.txt -name Team5 -s $seed")
-    script_lines.append("  done")
-    script_lines.append("done")
-    script_lines.append("")
-    
-    # --- Organize Output Files ---
-    script_lines.append("# Create a base folder (remove underscores from problem name)")
-    script_lines.append("base_folder=$(echo ${problem} | tr -d '_')")
-    script_lines.append("mkdir -p $base_folder/Team1")
-    script_lines.append("mkdir -p $base_folder/Team3")
-    script_lines.append("mkdir -p $base_folder/Team5")
-    script_lines.append("for file in sol*_t*_$(echo ${problem})_s*.txt; do")
-    script_lines.append("  if [[ $file == *\"_t1_\"* ]]; then")
-    script_lines.append("    mv $file $base_folder/Team1/")
-    script_lines.append("  elif [[ $file == *\"_t3_\"* ]]; then")
-    script_lines.append("    mv $file $base_folder/Team3/")
-    script_lines.append("  elif [[ $file == *\"_t5_\"* ]]; then")
-    script_lines.append("    mv $file $base_folder/Team5/")
-    script_lines.append("  fi")
-    script_lines.append("done")
-    script_lines.append("")
-    
-    # --- Keep Terminal Open ---
-    script_lines.append("echo 'All commands executed. Press Enter to exit.'")
-    script_lines.append("read")
-    
-    # Join lines into a complete script
-    script_content = "\n".join(script_lines)
-    
-    # Save the shell script to a file
+def create_run_all_sh():
+    # Build the Linux shell script that will be executed under WSL.
+    lines = [
+        "#!/bin/bash",
+        "# Redirect stdout and stderr to execution.log (while still displaying on terminal)",
+        "exec > >(tee execution.log) 2>&1",
+        "",
+        "# --- Environment Initialization ---",
+        "export LD_LIBRARY_PATH=/mnt/c/Users/javym/Documents/Github/TFGs/Premio1/rc/gurobi910/linux64/lib:$LD_LIBRARY_PATH",
+        "export PATH=/mnt/c/Users/javym/Documents/Github/TFGs/Premio1/rc/gurobi910/linux64/bin:$PATH",
+        "echo 'Initializing grbgetkey...'",
+        "gurobi_cl --version",
+        #"gurobi_cl test.lp  ", # If it gives a file error, then the license is working. Otherwise, a license needs to be set up
+        "grbgetkey <key>", # Set a key 
+        "",
+        "# --- Problem Definition (change here to update the problem name) ---",
+        "problem=X_12",
+        "",
+        "# --- Parameter Lists ---",
+        "t_list=(180 300 500 700 900)",
+        "seeds=(42 33 73)",
+        "",
+        "# --- Execute Team Commands ---",
+        "for t in \"${t_list[@]}\"; do",
+        "  for seed in \"${seeds[@]}\"; do",
+        "    echo \"=======================================================================\"",
+        "    echo \"EXECUTING TEAM1 FOR T=$t, SEED=$seed\"",
+        "    echo \"=======================================================================\"",
+        "    ./team1 -t $t -p ${problem}.json -o sol${t}_t1_${problem}_s${seed}.txt -name Team1 -s $seed",
+        "    echo \"=======================================================================\"",
+        "    echo \"EXECUTING TEAM3 FOR T=$t, SEED=$seed\"",
+        "    echo \"=======================================================================\"",
+        "    ./team3 -t $t -p $problem -o sol${t}_t3_${problem}_s${seed}.txt -name Team3 -s $seed",
+        "    echo \"=======================================================================\"",
+        "    echo \"EXECUTING TEAM5 FOR T=$t, SEED=$seed\"",
+        "    echo \"=======================================================================\"",
+        "    ./team5 -t $t -p ${problem}.json -o sol${t}_t5_${problem}_s${seed}.txt -s $seed",
+        "  done",
+        "done",
+        "",
+        "# --- Organize Output Files ---",
+        "base_folder=$(echo ${problem} | tr -d '_')",
+        "mkdir -p $base_folder/Team1",
+        "mkdir -p $base_folder/Team3",
+        "mkdir -p $base_folder/Team5",
+        "for file in sol*_t*_$(echo ${problem})_s*.txt; do",
+        "  if [[ $file == *\"_t1_\"* ]]; then",
+        "    mv $file $base_folder/Team1/",
+        "  elif [[ $file == *\"_t3_\"* ]]; then",
+        "    mv $file $base_folder/Team3/",
+        "  elif [[ $file == *\"_t5_\"* ]]; then",
+        "    mv $file $base_folder/Team5/",
+        "  fi",
+        "done",
+        "",
+        "# --- Keep Terminal Open for Inspection ---",
+        "echo 'All commands executed. Press Enter to exit.'",
+        "read"
+    ]
+    script_content = "\n".join(lines)
     script_filename = "run_all.sh"
-    with open(script_filename, "w") as f:
+    # Write with Unix line endings
+    with open(script_filename, "w", newline="\n") as f:
         f.write(script_content)
-    
-    # Make the shell script executable
     os.chmod(script_filename, 0o755)
+    return script_filename
+
+def create_run_all_bat():
+    # Batch file to convert the current Windows directory to a WSL path and run the Linux shell script.
+    bat_lines = [
+        "@echo off",
+        "REM Convert current directory to WSL path",
+        "for /f \"usebackq tokens=*\" %%i in (`wsl wslpath \"%CD%\"`) do set WSL_PATH=%%i",
+        "echo WSL Path is %WSL_PATH%",
+        "REM Run the shell script via WSL",
+        "wsl bash \"%WSL_PATH%/run_all.sh\"",
+        "pause"
+    ]
+    bat_content = "\r\n".join(bat_lines)
+    bat_filename = "run_all.bat"
+    with open(bat_filename, "w") as f:
+        f.write(bat_content)
+    return bat_filename
+
+def main():
+    # Create the Linux shell script.
+    sh_script = create_run_all_sh()
+    print(f"Created Linux shell script: {sh_script}")
     
-    # --- Launch a New Terminal Window ---
-    # Here we use xterm; modify the command if you prefer another terminal emulator.
-    terminal_command = f"xterm -hold -e './{script_filename}'"
-    subprocess.Popen(terminal_command, shell=True)
+    # Create the Windows batch file.
+    bat_script = create_run_all_bat()
+    print(f"Created Windows batch file: {bat_script}")
+    
+    # Launch a new Command Prompt window that runs the batch file.
+    cmd_command = f'start cmd /k "{bat_script}"'
+    print("Launching a new CMD window with WSL execution...")
+    subprocess.Popen(cmd_command, shell=True)
 
 if __name__ == "__main__":
     main()
