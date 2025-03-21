@@ -733,6 +733,13 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
     print("Finished loading Exclusions.")
     
     print("Finished loading instance.")
+
+    print("Creating risk and size clusters")
+    try:
+        instance.size_clusters = cluster_interventions_by_size(instance)
+        instance.risk_clusters = cluster_interventions_by_risk(instance)
+    except Exception as e:
+            logger.error(f"Error clustering: {e}", exc_info=True)
     return instance
 
 
@@ -1040,7 +1047,7 @@ class Solution:
             return
 
         # Compute clustering dictionary for sizes (keys: 'small', 'mid', 'big')
-        size_clusters = cluster_interventions_by_size(instance)
+        size_clusters = instance.size_clusters
 
         self.big_size_concurrent_interventions = []
         self.mid_size_concurrent_interventions = []
@@ -1083,7 +1090,7 @@ class Solution:
             return
 
         # Compute clustering dictionary for risks (keys: 'low', 'mid', 'high')
-        risk_clusters = cluster_interventions_by_risk(instance)
+        risk_clusters = instance.risk_clusters
 
         self.high_risk_concurrent_interventions = []
         self.mid_risk_concurrent_interventions = []
