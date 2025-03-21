@@ -3,6 +3,8 @@ from clustering_regions import get_distance_matrix, classify_interventions_by_pa
 import json
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
+import re
 
 def compute_intervention_difference_matrix(solutions: List[Solution], plot: bool = False) -> np.ndarray:
     """
@@ -129,54 +131,92 @@ def build_DM_matrix(instance_path, solutions_paths, points = "points.npy", point
 
     return DM_matrix
 
+def get_solution_paths(base_path = r'Decision Matrix\Alternatives\X12'):
+    """
+    Returns a list of relative paths to non-empty solution files in the X12 folder structure.
+    Each team has their own subfolder containing solution files.
+    
+    Returns:
+        list: List of relative paths to non-empty solution files
+    """
+    solution_paths = []
+    
+    # Walk through all subdirectories
+    for root, dirs, files in os.walk(base_path):
+        for file in files:
+            if file.endswith('.txt'):
+                full_path = os.path.join(root, file)
+                # Check if file is not empty
+                if os.path.getsize(full_path) > 0:
+                    # Keep the full path from Decision Matrix
+                    solution_paths.append(full_path)
+    
+    return solution_paths
+
+def extract_solution_keys(solution_paths):
+    """
+    Extracts key information (team number, time, seed) from solution file paths.
+    
+    Args:
+        solution_paths (list): List of solution file paths
+        
+    Returns:
+        list: List of dictionaries containing team number, time and seed for each solution
+    """
+    solution_keys = []
+    
+    for path in solution_paths:
+        # Get just the filename from the path
+        filename = os.path.basename(path)
+        
+        # Extract components using regex pattern matching
+        pattern = r'sol(\d+)_t(\d+)_X_12_s(\d+)\.txt'
+        match = re.match(pattern, filename)
+        
+        if match:
+            time, team, seed = match.groups()
+            solution_keys.append({
+                'team': int(team),
+                'time': int(time),
+                'seed': int(seed),
+                'path': path
+            })
+            
+    return solution_keys
+
 
 
 def main():
-    instance_path = r'Decision Matrix\Problem setups\C_10.json'
-    solutions_paths = [
-        r'Decision Matrix\Alternatives\1\solution_C_10_900.txt',
-        r'Decision Matrix\Alternatives\2\C_10_15min.txt'
-    ]
-    points = "points_20250310_123528.npy"
-    point_keys = "points_keys_20250310_123528.npy"
-
+    instance_path = r'Decision Matrix\Difficult Instances\X_12.json'
+    print("Loading the solution paths")
+    solutions_paths = get_solution_paths(base_path = r'Decision Matrix\Alternatives\X12')
+    solutions_paths = solutions_paths[:-10] #Remove the duplicated solutions
+    solution_keys = extract_solution_keys(solutions_paths)
+    points = "points_20250321_105731.npy"
+    point_keys = "points_keys_20250321_105731.npy"
+    print(f"\nBuilding DECISION MAKING MATRIX:\n")
     DM_matrix = build_DM_matrix(instance_path, solutions_paths, points, point_keys, plots = False)
-    print(f"\nDECISION MAKING MATRIX:\n")
-    # Create a figure and axis with larger size for better readability
-    plt.figure(figsize=(12, 6))
+    print(f"\nSaving DM Matrix to a markdown file:\n")
     
-    # Format column labels to be multiline
-    col_labels = ['\n'.join(col.split()) for col in DM_matrix.columns]
+    # Save table as markdown
+    markdown_table = "# Decision Making Matrix\n\n"
     
-    # Plot the table
-    table = plt.table(cellText=DM_matrix.values.round(3),
-                     colLabels=col_labels,
-                     rowLabels=DM_matrix.index,
-                     cellLoc='center',
-                     loc='center')
+    # Add header row
+    header = "| |" + "|".join(DM_matrix.columns) + "|\n"
+    separator = "|---|" + "|".join([":---:" for _ in DM_matrix.columns]) + "|\n"
+    markdown_table += header + separator
     
-    # Adjust table style
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1.2, 1.5)
-    
-    # Make column header cells taller to accommodate multiline text
-    for cell in table._cells:
-        if cell[0] == 0:  # Header row
-            table._cells[cell].set_height(0.15)
-    
-    # Remove axes
-    plt.axis('off')
-    
-    # Add title
-    plt.title('Decision Making Matrix', pad=20, size=14)
-    
-    # Adjust layout
-    plt.tight_layout()
-    
-    # Save the figure in high resolution
-    plt.savefig('decision_matrix.png', dpi=300, bbox_inches='tight')
-    plt.close()
+    # Add data rows
+    for i, (idx, row) in enumerate(DM_matrix.iterrows()):
+        # Get solution info from solution_keys
+        solution = solution_keys[i]
+        row_name = f"T{solution['team']}_D{solution['time']}_S{solution['seed']}"
+        row_str = f"|{row_name}|" + "|".join([f"{val:.3f}" for val in row]) + "|\n"
+        markdown_table += row_str
+        
+    # Save to file
+    with open('decision_matrix.md', 'w') as f:
+        f.write(markdown_table)
 
         
 if __name__ == "__main__":

@@ -940,7 +940,7 @@ class Solution:
             self.worst_risks.append(worst_risk)
             self.intervention_worst_risk[intervention_name] = worst_risk
         
-        self.highest_risk = max(self.worst_risks) #!Maybe it is better to take the mean value?
+        self.highest_risk = sum(self.worst_risks) / len(self.worst_risks) # Taking the mean across all instances' highest risks.
 
     def dist_matrix_to_closeness_concurrency(self, dist_mat) -> None:
         """
