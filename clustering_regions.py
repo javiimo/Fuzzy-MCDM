@@ -416,10 +416,10 @@ def classify_interventions_by_park(points_file: str, keys_file: str, near_distan
 
 
 
-def main():
+def main(path_points, path_keys):
     # Load French regions and intervention points.
     france_gdf = load_french_regions("france.json")
-    points, keys = load_points_and_keys("points.npy", "points_keys.npy")
+    points, keys = load_points_and_keys(path_points, path_keys)
     
     # Scale points to fit the French map and create a GeoDataFrame.
     x_scaled, y_scaled = scale_points(points, france_gdf)
@@ -460,9 +460,11 @@ def main():
     plot_points_with_parks(france_gdf, parks_gdf, points_gdf, new_keys, near_distance=near_threshold)
 
 if __name__ == "__main__":
-    main()
-    dist_matrix_df = get_distance_matrix("points.npy", "points_keys.npy")
+    points = "points_20250321_105731.npy"
+    keys = "points_keys_20250321_105731.npy"
+    main(points, keys)
+    dist_matrix_df = get_distance_matrix(points, keys)
     print(dist_matrix_df)
 
-    intervention_groups = classify_interventions_by_park("points.npy", "points_keys.npy", near_distance=0.05)
+    intervention_groups = classify_interventions_by_park(points, keys, near_distance=0.05)
     print(intervention_groups)
