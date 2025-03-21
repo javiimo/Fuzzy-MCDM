@@ -9,11 +9,12 @@ from pyproj import Transformer
 
 pd.set_option('future.no_silent_downcasting', True) #The "new" behavior is what pandas will use by default in the future. It stops automatically downcasting your objects to more specific types, so you'll need to be more explicit about type conversion when needed.
 
-def load_french_regions(file_path: str) -> gpd.GeoDataFrame:
+def load_french_regions(file_path: str, display = False) -> gpd.GeoDataFrame:
     """Load French regions from a GeoJSON file and print basic info."""
     france_gdf = gpd.read_file(file_path)
-    print("Columns:", france_gdf.columns)
-    print("CRS:", france_gdf.crs)
+    if display:
+        print("Columns:", france_gdf.columns)
+        print("CRS:", france_gdf.crs)
     return france_gdf
 
 def load_points_and_keys(points_file: str, keys_file: str):
@@ -67,7 +68,6 @@ def assign_regions(points_gdf: gpd.GeoDataFrame, france_gdf: gpd.GeoDataFrame) -
         predicate="within"
     )
     points_gdf["region"] = points_in_regions["NAME_1"].values
-    print(points_gdf.head())
     return points_gdf
 
 def format_keys(keys: np.ndarray) -> list:
@@ -418,7 +418,7 @@ def classify_interventions_by_park(points_file: str, keys_file: str, near_distan
 
 def main(path_points, path_keys):
     # Load French regions and intervention points.
-    france_gdf = load_french_regions("france.json")
+    france_gdf = load_french_regions("france.json", display = True)
     points, keys = load_points_and_keys(path_points, path_keys)
     
     # Scale points to fit the French map and create a GeoDataFrame.
