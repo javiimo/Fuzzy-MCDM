@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 import re
+from tqdm import tqdm
 
 def compute_intervention_difference_matrix(solutions: List[Solution], plot: bool = False) -> np.ndarray:
     """
@@ -78,14 +79,16 @@ def build_DM_matrix(instance_path, solutions_paths, points = "points.npy", point
     instance = load_instance_from_json(instance_data)
 
     # Load all solutions from provided file paths.
+    print("Loading solution files...")
     solutions = [Solution(sol_path) for sol_path in solutions_paths]
 
     # Instance-level computations.
+    print("Instance level computations...")
     dist_matrix_df = get_distance_matrix(points, point_keys)  # DataFrame with values: "close", "mid", "far"
     envirnomental_risk_groups = classify_interventions_by_park(points, point_keys, near_distance=0.05)  # dict with keys: high, mid, low
 
     # Compute all metrics for each solution.
-    for sol in solutions:
+    for sol in tqdm(solutions, desc="Computing metrics for solutions"):
         sol.compute_concurrency(instance)           # Computes concurrency (e.g., highest concurrency)
         sol.compute_seansonality(instance)            # Computes seasonality proportions (e.g., winter, summer, etc.)
         if plots:
@@ -104,6 +107,7 @@ def build_DM_matrix(instance_path, solutions_paths, points = "points.npy", point
     mat = compute_intervention_difference_matrix(solutions, plot = True) #This is the similarity between sols matrix
 
     # Build the DM Matrix as a list of dictionaries.
+    print("Building DM Matrix...")
     alternatives = []
     for i, sol in enumerate(solutions):
         alt_id = f"A{i+1}"
@@ -188,16 +192,15 @@ def extract_solution_keys(solution_paths):
 
 def main():
     instance_path = r'Decision Matrix\Difficult Instances\X_12.json'
-    print("Loading the solution paths")
+    print("Loading the solution paths...")
     solutions_paths = get_solution_paths(base_path = r'Decision Matrix\Alternatives\X12')
     solutions_paths = solutions_paths[:-10] #Remove the duplicated solutions
     solution_keys = extract_solution_keys(solutions_paths)
     points = "points_20250321_105731.npy"
     point_keys = "points_keys_20250321_105731.npy"
-    print(f"\nBuilding DECISION MAKING MATRIX:\n")
     DM_matrix = build_DM_matrix(instance_path, solutions_paths, points, point_keys, plots = False)
-    print(f"\nSaving DM Matrix to a markdown file:\n")
     
+    print(f"\nSaving DM Matrix to a markdown file...\n")
     # Save table as markdown
     markdown_table = "# Decision Making Matrix\n\n"
     
