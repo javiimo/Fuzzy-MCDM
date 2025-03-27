@@ -69,41 +69,41 @@ def transform_corr_to_distance(corr_matrix, method="linear"):
         numpy.ndarray: A distance matrix with values in [0, 1].
     """
     corr_matrix = np.array(corr_matrix)
-    
-    # Validate correlation range.
-    if np.any(corr_matrix < -1) or np.any(corr_matrix > 1):
-        raise ValueError("All correlation values must be in the range [-1, 1].")
+    mask = corr_matrix <= 0
+    distance_matrix = np.zeros_like(corr_matrix)
+    distance_matrix[mask] = np.nan
+    valid = ~mask
     
     if method == "linear":
-        distance_matrix = (1 - corr_matrix) / 2
+        distance_matrix[valid] = (1 - corr_matrix[valid])
     elif method == "sqrt":
-        distance_matrix = np.sqrt((1 - corr_matrix) / 2)
+        distance_matrix[valid] = np.sqrt((1 - corr_matrix[valid]))
     elif method == "arccos":
-        distance_matrix = np.arccos(corr_matrix) / np.pi
+        distance_matrix[valid] = np.arccos(corr_matrix[valid]) / np.pi
     elif method == "logistic":
         a = 2  # steepness parameter
         f = lambda r: 1 / (1 + np.exp(a * r))
         f1 = f(1)
         f_neg1 = f(-1)
-        distance_matrix = (f(corr_matrix) - f1) / (f_neg1 - f1)
+        distance_matrix[valid] = (f(corr_matrix[valid]) - f1) / (f_neg1 - f1)
     elif method == "exponential":
         k = 1
-        distance_matrix = (np.exp(-k * corr_matrix) - np.exp(-k)) / (np.exp(k) - np.exp(-k))
+        distance_matrix[valid] = (np.exp(-k * corr_matrix[valid]) - np.exp(-k)) / (np.exp(k) - np.exp(-k))
     elif method == "power2":
-        distance_matrix = ((1 - corr_matrix) / 2)**2
+        distance_matrix[valid] = ((1 - corr_matrix[valid]) / 2)**2
     elif method == "power1/3":
-        distance_matrix = ((1 - corr_matrix) / 2)**(1/3)
+        distance_matrix[valid] = ((1 - corr_matrix[valid]) / 2)**(1/3)
     elif method == "arctan":
         alpha = 1
-        distance_matrix = np.arctan(alpha * (1 - corr_matrix)) / np.arctan(alpha * 2)
+        distance_matrix[valid] = np.arctan(alpha * (1 - corr_matrix[valid])) / np.arctan(alpha * 2)
     elif method == "sine":
-        distance_matrix = np.sin((np.pi/4) * (1 - corr_matrix))
+        distance_matrix[valid] = np.sin((np.pi/4) * (1 - corr_matrix[valid]))
     else:
         raise ValueError(f"Unknown distance transformation method: {method}")
     
     return distance_matrix
 
-def compute_distance_matrix(instance, method="linear"):
+def compute_distance_matrix(instance, percentile=1,method="linear"):
     """
     Computes a distance matrix from the normalized correlation matrix.
     For off-diagonal entries, if the correlation (from norm_corr_matrix) is ≤ 0, the distance is set to NaN.
@@ -111,19 +111,27 @@ def compute_distance_matrix(instance, method="linear"):
     """
     keys, norm_corr_matrix = compute_risk_corr_matrix(instance)
     distance_matrix = transform_corr_to_distance(norm_corr_matrix, method=method)
-    
+
+    # Only consider valid non diagonal and non NaN values for rescaling
     off_diag_mask = ~np.eye(distance_matrix.shape[0], dtype=bool)
-    # Only consider valid (positive) correlations for rescaling.
-    valid_mask = off_diag_mask & (norm_corr_matrix > 0)
+    valid_mask = off_diag_mask & (~np.isnan(distance_matrix))
     if np.any(valid_mask):
         d_min = np.nanmin(distance_matrix[valid_mask])
         d_max = np.nanmax(distance_matrix[valid_mask])
         epsilon = 1e-6
         distance_matrix[valid_mask] = epsilon + (1 - epsilon) * (distance_matrix[valid_mask] - d_min) / (d_max - d_min)
+
+    # Set to NaN values over the percentile.
+    limit = np.percentile(distance_matrix[~np.isnan(distance_matrix)], [percentile])[0]
+    print(f"LIMIT:", limit)
+    # Print count of NaN values in distance matrix
+    nan_count = np.sum(np.isnan(distance_matrix))
+    print(f"Number of NaN values in distance matrix: {nan_count}")
+    distance_matrix[off_diag_mask & (distance_matrix > limit)] = np.nan
+    # Print count of NaN values in distance matrix
+    nan_count = np.sum(np.isnan(distance_matrix))
+    print(f"Number of NaN values in distance matrix: {nan_count}")
     
-    # Set distances to NaN where correlation is ≤ 0 (except on the diagonal)
-    invalid_mask = off_diag_mask & (norm_corr_matrix <= 0)
-    distance_matrix[invalid_mask] = np.nan
     return keys, distance_matrix
 
 # -------------------------------
@@ -252,7 +260,8 @@ def test_embeddings(instance, distance_methods, plot=True, top_n=5, mat_stats=Fa
     
     for d_method in tqdm.tqdm(distance_methods, desc=f"Distance methods", leave=False):
         print(f"\n=== Testing for distance transformation = {d_method} ===")
-        keys, dist_matrix = compute_distance_matrix(instance, method=d_method)
+        keys, dist_matrix = compute_distance_matrix(instance, #percentile=99,
+                                                     method=d_method)
         
         if mat_stats:
             print(f"\nCORRELATION MATRIX:")
@@ -307,7 +316,7 @@ def compute_and_save_embedding(instance, distance_method, points_file, mat_stats
     weight_matrix = np.where(corr_matrix <= 0, 0, corr_matrix)
     
     # Compute distance matrix using the provided distance method
-    keys, dist_matrix = compute_distance_matrix(instance, method=distance_method)
+    keys, dist_matrix = compute_distance_matrix(instance, percentile =99, method=distance_method)
     
     if mat_stats:
         print(f"\nCORRELATION MATRIX:")
