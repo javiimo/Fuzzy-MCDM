@@ -199,6 +199,9 @@ def main():
     points = "points_20250321_105731.npy"
     point_keys = "points_keys_20250321_105731.npy"
     DM_matrix = build_DM_matrix(instance_path, solutions_paths, points, point_keys, plots = False)
+
+    print(f"\nSaving DM Matrix to a CSV file...\n")
+    DM_matrix.to_csv('decision_matrix.csv')
     
     print(f"\nSaving DM Matrix to a markdown file...\n")
     # Save table as markdown
