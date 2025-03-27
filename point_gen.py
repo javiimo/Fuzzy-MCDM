@@ -363,8 +363,11 @@ def matrix_statistics(matrix):
         diff_from_median = np.abs(non_zero_one_elements - non_zero_one_median)
         values_far_from_median = diff_from_median > 0.1
         percent_far_from_median = (np.sum(values_far_from_median) / non_zero_one_elements.size) * 100
+        perc = [1,2,3,4,5,6,7,8,9,10, 20, 30, 40, 50, 60, 70, 80, 90,91,92,93,94,95,96,97,98,99]
+        percentiles = np.percentile(non_zero_one_elements, perc)
     else:
         percent_far_from_median = 0
+        percentiles = np.zeros(9)
     
     print("Overall Matrix Stats:")
     print("\nContains zeros:      ", np.any(matrix == 0))
@@ -379,6 +382,9 @@ def matrix_statistics(matrix):
     print("  Median:              ", non_zero_one_median) 
     print("  Variance:            ", non_zero_one_var)
     print("  % values >0.1 from median:", f"{percent_far_from_median:.1f}%")
+    print("\nPercentiles:")
+    for a,b in zip(perc, percentiles):
+        print(f"  {a}th:                 {b}")
     print("\n\n")
 
 # -------------------------------
@@ -404,10 +410,10 @@ if __name__ == "__main__":
     ]
     
     # Run the testing function using non-metric MDS (scikit-learn)
-    #results = test_embeddings(instance, distance_methods, plot=True, top_n=5, mat_stats=True, draw_lines=True)
+    results = test_embeddings(instance, distance_methods, plot=True, top_n=5, mat_stats=True, draw_lines=True)
 
     # Uncomment below to compute and save a single embedding:
-    points_file = "points.npy"  # Define the file path to save the embedding points
-    distance_method = distance_methods[0]  # Use the first (and only) distance method
-    points, stress, keys = compute_and_save_embedding(instance, distance_method, points_file, mat_stats=True)
-    print("Computed embedding points and stress saved.")
+    # points_file = "points.npy"  # Define the file path to save the embedding points
+    # distance_method = distance_methods[0]  # Use the first (and only) distance method
+    # points, stress, keys = compute_and_save_embedding(instance, distance_method, points_file, mat_stats=True)
+    # print("Computed embedding points and stress saved.")
