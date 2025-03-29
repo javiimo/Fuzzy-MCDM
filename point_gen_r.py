@@ -86,7 +86,7 @@ def transform_corr_to_distance(corr_matrix, method="linear"):
         raise ValueError("All correlation values must be in the range [-1, 1].")
     
     if method == "linear":
-        distance_matrix = (1 - corr_matrix) / 2
+        distance_matrix = (1 - corr_matrix)/2
     elif method == "sqrt":
         distance_matrix = np.sqrt((1 - corr_matrix) / 2)
     elif method == "arccos":
@@ -125,12 +125,12 @@ def compute_distance_matrix(instance, method="linear"):
     
     off_diag_mask = ~np.eye(distance_matrix.shape[0], dtype=bool)
     # Only consider valid (positive) correlations for rescaling.
-    valid_mask = off_diag_mask & (norm_corr_matrix > 0)
-    if np.any(valid_mask):
-        d_min = np.nanmin(distance_matrix[valid_mask])
-        d_max = np.nanmax(distance_matrix[valid_mask])
-        epsilon = 1e-6
-        distance_matrix[valid_mask] = epsilon + (1 - epsilon) * (distance_matrix[valid_mask] - d_min) / (d_max - d_min)
+    #valid_mask = off_diag_mask & (norm_corr_matrix > 0)
+    # if np.any(valid_mask):
+    #     d_min = np.nanmin(distance_matrix[valid_mask])
+    #     d_max = np.nanmax(distance_matrix[valid_mask])
+    #     epsilon = 1e-6
+    #     distance_matrix[valid_mask] = epsilon + (1 - epsilon) * (distance_matrix[valid_mask] - d_min) / (d_max - d_min)
     
     # Set distances to NaN where correlation is ≤ 0 (except on the diagonal)
     invalid_mask = off_diag_mask & (norm_corr_matrix <= 0)
@@ -167,7 +167,7 @@ def recover_points_MDS_weighted(distance_matrix, weight_matrix, n_dimensions=2, 
     
     # Call the smacofSym function in R with type = "ordinal" to perform non-metric MDS.
     r_code = f"""
-    result <- smacofSym(delta = r_distance, weightmat = r_weight, ndim = {n_dimensions}, type = "ordinal")
+    result <- smacofSym(delta = r_distance, weightmat = r_weight, ndim = {n_dimensions}, type = "ordinal", init = "random", verbose = TRUE, itmax = 500, modulus = 1)
     """
     ro.r(r_code)
     
@@ -435,7 +435,7 @@ if __name__ == "__main__":
     ]
     
     # Run the testing function using non-metric MDS (scikit-learn)
-    results = test_embeddings(instance, distance_methods, plot=True, top_n=5, mat_stats=True, draw_lines=True)
+    results = test_embeddings(instance, distance_methods, plot=True, top_n=5, mat_stats=True, draw_lines=False)
 
     # Uncomment below to compute and save a single embedding:
     # points_file = "points.npy"  # Define the file path to save the embedding points
