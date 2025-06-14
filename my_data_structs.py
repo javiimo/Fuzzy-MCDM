@@ -238,7 +238,7 @@ class Exclusion:
         return (f"Exclusion Constraint: Interventions {self.interventions} "
                 f"cannot overlap during season '{self.season}'.")
 
-@dataclass
+
 @dataclass
 class ScheduleOption:
     """
