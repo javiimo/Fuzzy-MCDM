@@ -1,11 +1,15 @@
 from my_data_structs import *
-from clustering_regions import get_distance_matrix, classify_interventions_by_park
+from map import build_fuzzy_intervention_distance, build_fuzzy_intervention_park_distance, load_national_parks
+from fuzzy_var import fuzz_dist
 import json
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
 import re
 from tqdm import tqdm
+import numpy as np
+import geopandas as gpd # Assuming parks_gdf is a GeoDataFrame
+
 
 def compute_intervention_difference_matrix(solutions: List[Solution], plot: bool = False) -> np.ndarray:
     """
@@ -47,31 +51,26 @@ def compute_intervention_difference_matrix(solutions: List[Solution], plot: bool
     
     return matrix
 
-def build_DM_matrix(instance_path, solutions_paths, points = "points.npy", point_keys = "points_keys.npy", plots=True):
+def build_DM_matrix(instance_path, solutions_paths, points="points.npy", point_keys="points_keys.npy", parks_path="parks.csv", plots=True):
     """
     Build the Decision Matrix (DM Matrix) for evaluating maintenance scheduling alternatives.
     
     This function performs the following steps:
       1. Loads a maintenance scheduling instance from a JSON file.
       2. Loads a list of solution alternatives from the provided file paths.
-      3. For each solution, computes several performance criteria:
-         - Highest concurrency: The maximum number of interventions active at any timestep.
-         - Worst risk: The highest risk value among scheduled interventions.
-         - Risk concurrency: A quadratic/linear score based on the clustering of interventions by risk.
-         - Size concurrency: A quadratic/linear score based on the clustering of interventions by intervention size.
-         - Closeness concurrency: A linear score computed from the number of close and mid-distance intervention pairs. This one is linear due to the transitivity of the distance relation.
-         - Environmental impact concurrency: A score based on concurrent high and mid environmental impact interventions.
-         - Seasonality proportions: For each season (e.g., winter, summer, etc.), the proportion of scheduled interventions active during that season.
-      4. Aggregates these criteria into a pandas DataFrame (the DM Matrix), where each row represents a solution alternative 
-         (named “A1”, “A2”, “A3”, etc.) and each column corresponds to one criterion.
+      3. For each solution, computes several performance criteria, expanding fuzzy concurrency metrics into their classes.
+      4. Aggregates these criteria into a pandas DataFrame (the DM Matrix).
     
     Args:
-        instance_path (str): Path to the JSON file containing the maintenance scheduling instance data.
+        instance_path (str): Path to the JSON file containing the instance data.
         solutions_paths (List[str]): List of file paths for the solution files.
-        plots (bool, optional): If True, generates plots for each solution during processing. Defaults to True.
+        points (str): Path to the numpy file for intervention coordinates.
+        point_keys (str): Path to the numpy file for intervention keys.
+        parks_path (str): Path to the csv for parks data.
+        plots (bool, optional): If True, generates plots for each solution. Defaults to True.
     
     Returns:
-        pd.DataFrame: A DataFrame representing the DM Matrix with alternatives as rows and evaluation criteria as columns.
+        pd.DataFrame: A DataFrame representing the DM Matrix.
     """
     # Load instance data and create an instance object.
     with open(instance_path, "r") as f:
@@ -82,47 +81,71 @@ def build_DM_matrix(instance_path, solutions_paths, points = "points.npy", point
     print("Loading solution files...")
     solutions = [Solution(sol_path) for sol_path in solutions_paths]
 
-    # Instance-level computations.
-    print("Instance level computations...")
-    dist_matrix_df = get_distance_matrix(points, point_keys)  # DataFrame with values: "close", "mid", "far"
-    envirnomental_risk_groups = classify_interventions_by_park(points, point_keys, near_distance=0.05)  # dict with keys: high, mid, low
+    # Instance-level computations for fuzzy spatial metrics.
+    print("Instance level computations for fuzzy spatial metrics...")
+    pts = np.load(points)
+    pkeys = np.load(point_keys, allow_pickle=True)
+    
+    # Define fuzzy distances as specified
+    fuzzy_interv = fuzz_dist(5_000, 15_000, 50_000, 100_000, 200_000)
+    fuzzy_parks = fuzz_dist(1_000, 10_000, 20_000, 60_000, 150_000)
+    
+    # Load parks data
+    try:
+        parks_gdf = load_national_parks(parks_path)
+    except Exception as e:
+        print(f"Error loading parks shapefile from {parks_path}: {e}")
+        print("Cannot compute environmental impact concurrency. Exiting.")
+        return pd.DataFrame()
+
+    interv_mems = build_fuzzy_intervention_distance(pts, pkeys, fuzzy_interv)
+    park_mems = build_fuzzy_intervention_park_distance(pts, pkeys, parks_gdf, fuzzy_parks)
+
 
     # Compute all metrics for each solution.
     for sol in tqdm(solutions, desc="Computing metrics for solutions"):
-        sol.compute_concurrency(instance)           # Computes concurrency (e.g., highest concurrency)
-        sol.compute_seansonality(instance)            # Computes seasonality proportions (e.g., winter, summer, etc.)
+        sol.compute_concurrency(instance)
+        sol.compute_seansonality(instance)
         if plots:
             sol.plot_concurrency()
 
-        sol.set_worst_risks(instance)                 # Sets worst risk (highest risk among interventions)
-        sol.compute_risk_concurrency(instance)        # Computes risk concurrency score
-        sol.compute_size_concurrency(instance)        # Computes size concurrency score
-        sol.dist_matrix_to_closeness_concurrency(dist_matrix_df)  # Computes closeness concurrency score
-        sol.compute_environmental_impact_concurrency(envirnomental_risk_groups)  # Computes environmental impact concurrency score
+        sol.set_worst_risks(instance)  # Still needed for some internal logic, but won't add it to the DM matrix
+        sol.compute_risk_concurrency(instance)
+        sol.compute_size_concurrency(instance)
+        sol.dist_matrix_to_closeness_concurrency(interv_mems)
+        sol.compute_environmental_impact_concurrency(park_mems, tconorm=np.maximum)
 
         if plots:
             sol.plot_all_concurrency_details()
 
     print("Plotting the differences between solutions in a heatmap...")
-    mat = compute_intervention_difference_matrix(solutions, plot = True) #This is the similarity between sols matrix
+    mat = compute_intervention_difference_matrix(solutions, plot = plots)
 
     # Build the DM Matrix as a list of dictionaries.
     print("Building DM Matrix...")
     alternatives = []
+
+    def _add_scores(data_dict, scores_dict, prefix):
+        if scores_dict:
+            for k, v in scores_dict.items():
+                # Sanitize key for column name if needed, though current keys are fine
+                col_name = f"{prefix}_{k.replace('-', '_')}" 
+                data_dict[col_name] = v
+
     for i, sol in enumerate(solutions):
         alt_id = f"A{i+1}"
-        # Extract key criteria values from the solution.
         row_data = {
             "Alternative": alt_id,
             "Highest Concurrency": getattr(sol, "highest_concurrency", None),
-            "Highest Risk": getattr(sol, "highest_risk", None),
-            "Risk Concurrency": getattr(sol, "risk_concurrency", None),
-            "Size Concurrency": getattr(sol, "size_concurrency", None),
-            "Closeness Concurrency": getattr(sol, "closeness_concurrency", None),
-            "Environmental Impact Concurrency": getattr(sol, "env_impact_concurrency", None)
         }
+        
+        # Expand all concurrency scores from dictionaries into separate columns
+        _add_scores(row_data, getattr(sol, "size_concurrency", {}), "Size")
+        _add_scores(row_data, getattr(sol, "risk_concurrency", {}), "Risk")
+        _add_scores(row_data, getattr(sol, "closeness_concurrency", {}), "Closeness")
+        _add_scores(row_data, getattr(sol, "environmental_impact_concurrency", {}), "EnvImpact")
+
         # Add seasonality proportions as separate columns.
-        # For example, if sol.seasonality contains keys like 'winter', 'summer', 'is'
         seasonality = getattr(sol, "seasonality", {})
         for season, proportion in seasonality.items():
             row_data[f"{season}-like"] = proportion
@@ -160,7 +183,7 @@ def get_solution_paths(base_path = r'Decision Matrix\Alternatives\X12'):
 def extract_solution_keys(solution_paths):
     """
     Extracts key information (team number, time, seed) from solution file paths.
-    
+
     Args:
         solution_paths (list): List of solution file paths
         
@@ -168,67 +191,60 @@ def extract_solution_keys(solution_paths):
         list: List of dictionaries containing team number, time and seed for each solution
     """
     solution_keys = []
-    
+    pattern = r'sol(\d+)_t(\d+)_X_12_s(\d+)\.txt'
     for path in solution_paths:
-        # Get just the filename from the path
         filename = os.path.basename(path)
-        
-        # Extract components using regex pattern matching
-        pattern = r'sol(\d+)_t(\d+)_X_12_s(\d+)\.txt'
         match = re.match(pattern, filename)
-        
         if match:
             time, team, seed = match.groups()
             solution_keys.append({
-                'team': int(team),
-                'time': int(time),
-                'seed': int(seed),
-                'path': path
+                'team': int(team), 'time': int(time), 'seed': int(seed), 'path': path
             })
-            
     return solution_keys
-
-
 
 def main():
     instance_path = r'Decision Matrix\Difficult Instances\X_12.json'
     print("Loading the solution paths...")
-    solutions_paths = get_solution_paths(base_path = r'Decision Matrix\Alternatives\X12')
-    solutions_paths = solutions_paths[:-10] #Remove the duplicated solutions
+    solutions_paths = get_solution_paths(base_path=r'Decision Matrix\Alternatives\X12')
+    solutions_paths = solutions_paths[:-10]  # Remove the duplicated solutions
     solution_keys = extract_solution_keys(solutions_paths)
+    
+    # Define paths for spatial data
     points = "points_20250329_203043.npy"
     point_keys = "points_keys_20250329_203043.npy"
-    DM_matrix = build_DM_matrix(instance_path, solutions_paths, points, point_keys, plots = True)
+    parks_csv_path = "geojsons_nat_parks/pnr_polygon.csv" 
+
+    # Build the new Decision Matrix
+    DM_matrix = build_DM_matrix(
+        instance_path, solutions_paths, 
+        points, point_keys, parks_path=parks_csv_path,
+        plots=False
+    )
+    
+    if DM_matrix.empty:
+        print("DM Matrix could not be generated.")
+        return
 
     print(f"\nSaving DM Matrix to a CSV file...\n")
-    DM_matrix.to_csv('decision_matrix.csv')
+    DM_matrix.to_csv('decision_matrix_expanded.csv')
     
     print(f"\nSaving DM Matrix to a markdown file...\n")
-    # Save table as markdown
     markdown_table = "# Decision Making Matrix\n\n"
-    
-    # Add header row
     header = "| |" + "|".join(DM_matrix.columns) + "|\n"
     separator = "|---|" + "|".join([":---:" for _ in DM_matrix.columns]) + "|\n"
     markdown_table += header + separator
     
-    # Add data rows
     for i, (idx, row) in enumerate(DM_matrix.iterrows()):
-        # Get solution info from solution_keys
         solution = solution_keys[i]
         row_name = f"T{solution['team']}_D{solution['time']}_S{solution['seed']}"
-        row_str = f"|{row_name}|" + "|".join([f"{val:.3f}" for val in row]) + "|\n"
+        
+        # Format each value to 3 decimal places, handling potential None values
+        formatted_row = [f"{val:.3f}" if isinstance(val, (int, float)) else str(val) for val in row]
+        row_str = f"|{row_name}|" + "|".join(formatted_row) + "|\n"
         markdown_table += row_str
         
-    # Save to file
-    with open('decision_matrix.md', 'w') as f:
+    with open('decision_matrix_expanded.md', 'w') as f:
         f.write(markdown_table)
-
         
 if __name__ == "__main__":
     main()
-
-
-
-    
-    
