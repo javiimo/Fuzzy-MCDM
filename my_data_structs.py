@@ -185,24 +185,6 @@ def cluster_interventions_by_risk(instance) -> Dict[str, List[str]]:
     print("Cluster by risk centroids:")
     return cluster_by_attribute(avg_risks, names, ['low', 'mid', 'high'])
 
-
-######################################################
-#               Clustering Functions
-######################################################
-
-import skfuzzy as fuzz
-
-def fuzz_dist(a,b,c,d,e):
-    temperature['cold']   = 
-temperature['warm']   = fuzz.trimf(x, [10, 20, 30])
-temperature['hot']    = fuzz.trapmf(x, [25, 30, 40, 40])
-    return dist = {
-        'close' : fuzz.trapmf(x, [0, 0, a, b]),
-        'mid-close' : fuzz.trimf(x, [10, 20, 30])
-    }
-
-
-
 ######################################################
 #           Data Classes
 ######################################################
