@@ -4,9 +4,13 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any
 import logging
 import itertools
+import math
+import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.cluster import KMeans
+import skfuzzy as fuzz
+from sklearn.cluster import KMeans # Keep for reference or other potential uses
+from fuzzy_var import tconorm_aggregate
 
 
 ####################################################
@@ -49,141 +53,96 @@ def trim_list(lst: List[Any]) -> str:
 #               Clustering Functions
 ######################################################
 
-def cluster_by_attribute(values: List[float], names: List[str], labels: List[str]) -> Dict[str, List[str]]:
+def fuzzy_cluster_by_attribute(values: List[float], names: List[str], labels: List[str]) -> pd.DataFrame:
     """
-    Generic clustering function that applies k-means (k=3) to 1D values,
+    Generic fuzzy clustering function that applies fuzzy c-means (c=5) to 1D values,
     and maps the clusters (in ascending order of centroid value) to the provided labels.
-    
-    Additionally, prints the centroid value for each cluster label.
+    The result is a DataFrame of membership values.
     
     Args:
         values: A list of one-dimensional real values.
         names: A list of instance names corresponding to the values.
-        labels: A list of 3 cluster labels ordered from smallest to largest.
-                e.g. for sizes: ['small', 'mid', 'big'], for risk: ['low', 'mid', 'high'].
+        labels: A list of 5 cluster labels ordered from smallest to largest.
+                e.g., for sizes: ['small', 'mid-small', 'medium', 'mid-large', 'large'].
                 
     Returns:
-        A dictionary mapping each label to the list of instance names assigned to that cluster.
+        A pandas DataFrame where rows are instance names and columns are cluster labels,
+        containing the membership value of each instance to each cluster.
     """
-    data = np.array(values).reshape(-1, 1)
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    cluster_ids = kmeans.fit_predict(data)
-    centroids = kmeans.cluster_centers_.flatten()
+    if len(set(values)) < len(labels):
+        logger.warning("Number of unique values is less than number of clusters. Clustering may be ineffective.")
     
-    # Determine mapping: smallest centroid gets labels[0], etc.
-    sorted_cluster_ids = np.argsort(centroids)
-    cluster_label_mapping = {cluster_id: labels[idx] for idx, cluster_id in enumerate(sorted_cluster_ids)}
+    data = np.array(values).reshape(-1, 1).T  # Fuzzy c-means expects features in rows
     
-    # Informative print of the centroids for each label.
-    print("Cluster centroids:")
-    for idx, label in enumerate(labels):
-        centroid_value = centroids[sorted_cluster_ids[idx]]
-        print(f"  {label}: {centroid_value:.4f}")
+    # Apply fuzzy c-means
+    # n_clusters=len(labels) to be generic, but request specifies 5
+    cntr, u, u0, d, jm, p, fpc = fuzz.cluster.cmeans(
+        data, c=len(labels), m=2, error=0.005, maxiter=1000, init=None, seed=42
+    )
     
-    # Build the result dictionary.
-    result: Dict[str, List[str]] = {label: [] for label in labels}
-    for name, cluster_id in zip(names, cluster_ids):
-        result[cluster_label_mapping[cluster_id]].append(name)
+    # `u` has shape (n_clusters, n_samples), transpose it
+    memberships = u.T
+    
+    # Sort centroids to map to labels correctly (smallest centroid -> labels[0], etc.)
+    sorted_centroid_indices = np.argsort(cntr.flatten())
+    
+    # Reorder the membership columns to match the sorted labels
+    sorted_memberships = memberships[:, sorted_centroid_indices]
+    
+    # Informative print of the centroids for each label
+    print("Fuzzy Cluster Centroids:")
+    for i, label in enumerate(labels):
+        centroid_value = cntr[sorted_centroid_indices[i]]
+        print(f"  {label}: {centroid_value[0]:.4f}")
         
-    return result
+    # Create a DataFrame for easy lookup
+    membership_df = pd.DataFrame(sorted_memberships, index=names, columns=labels)
+    
+    return membership_df
 
-def plot_clustering_heatmap(cluster_dict: Dict[str, List[str]]) -> None:
-    """
-    Plots a heatmap for the clustering result contained in cluster_dict.
-    The input dictionary has cluster labels as keys and lists of instance names as values.
-    The function creates a one-row heatmap where each cell's color corresponds to the cluster assignment.
-    
-    Args:
-        cluster_dict: A dictionary mapping cluster labels (e.g., 'small', 'mid', 'big')
-                      to a list of instance names in that cluster.
-    """
-    # Determine the order of clusters. Assuming the keys are in the desired order,
-    # e.g., for sizes: ['small', 'mid', 'big'] or for risk: ['low', 'mid', 'high'].
-    cluster_order = list(cluster_dict.keys())
-    
-    # Create lists for cluster assignments and corresponding intervention names.
-    assignments = []
-    names = []
-    for idx, cluster_label in enumerate(cluster_order):
-        for name in cluster_dict[cluster_label]:
-            assignments.append(idx)
-            names.append(name)
-            
-    # Create a 2D array for heatmap: one row with a cell per intervention.
-    data = np.array(assignments).reshape(1, -1)
-    
-    # Create the heatmap.
-    fig, ax = plt.subplots(figsize=(max(8, len(names)*0.5), 2))
-    cax = ax.imshow(data, aspect="auto", cmap="viridis")
-    
-    # Set ticks on x-axis for each intervention.
-    ax.set_xticks(range(len(names)))
-    ax.set_xticklabels(names, rotation=90, fontsize=8)
-    # One y-tick for the single row.
-    ax.set_yticks([0])
-    ax.set_yticklabels([""])
-    
-    # Create a colorbar with ticks corresponding to the cluster indices.
-    cbar = fig.colorbar(cax, ax=ax, ticks=range(len(cluster_order)))
-    cbar.ax.set_yticklabels(cluster_order)
-    
-    ax.set_title("Interventions Clustering Heatmap")
-    plt.tight_layout()
-    plt.show()
 
-def cluster_interventions_by_size(instance) -> Dict[str, List[str]]:
+def cluster_interventions_by_size(instance) -> pd.DataFrame:
     """
-    Clusters the interventions in the maintenance scheduling instance based on mean intervention size.
-    Uses labels 'small', 'mid', 'big' for clusters.
-    
-    Args:
-        instance: A MaintenanceSchedulingInstance with interventions.
+    Clusters interventions based on mean intervention size using fuzzy c-means.
+    Uses 5 labels: 'small', 'mid-small', 'medium', 'mid-large', 'large'.
     
     Returns:
-        A dictionary mapping the cluster label to the list of intervention names.
+        A pandas DataFrame of membership values (rows: interventions, cols: size labels).
     """
     names = []
     sizes = []
     for intervention in instance.interventions.values():
-        # Ensure the mean size is computed.
         size = intervention.mean_intervention_size
         if size == 0.0:
             size = intervention.compute_mean_intervention_size()
         names.append(intervention.name)
         sizes.append(size)
         
-    # For sizes: smallest value -> "small", largest -> "big".
-    print("Cluster by size centroids:")
-    return cluster_by_attribute(sizes, names, ['small', 'mid', 'big'])
+    labels = ['small', 'mid-small', 'medium', 'mid-large', 'large']
+    print("\nClustering interventions by size...")
+    return fuzzy_cluster_by_attribute(sizes, names, labels)
 
-def cluster_interventions_by_risk(instance) -> Dict[str, List[str]]:
+def cluster_interventions_by_risk(instance) -> pd.DataFrame:
     """
-    Clusters the interventions in the maintenance scheduling instance based on average overall risk.
-    Uses labels 'low', 'mid', 'high' for clusters.
-    
-    Args:
-        instance: A MaintenanceSchedulingInstance with interventions.
-    
+    Clusters interventions based on average overall risk using fuzzy c-means.
+    Uses 5 labels: 'low', 'mid-low', 'mid', 'mid-high', 'high'.
+
     Returns:
-        A dictionary mapping the cluster label to the list of intervention names.
+        A pandas DataFrame of membership values (rows: interventions, cols: risk labels).
     """
     names = []
     avg_risks = []
     for intervention in instance.interventions.values():
-        # Compute overall mean risk if needed.
         if not intervention.overall_mean_risk:
             intervention.compute_overall_mean_risk()
-        # Calculate average risk (avoiding division by zero).
-        if intervention.overall_mean_risk:
-            avg_risk = sum(intervention.overall_mean_risk) / len(intervention.overall_mean_risk)
-        else:
-            avg_risk = 0.0
+        avg_risk = sum(intervention.overall_mean_risk) / len(intervention.overall_mean_risk) if intervention.overall_mean_risk else 0.0
         names.append(intervention.name)
         avg_risks.append(avg_risk)
-    
-    # For risk: lowest value -> "low", highest -> "high".
-    print("Cluster by risk centroids:")
-    return cluster_by_attribute(avg_risks, names, ['low', 'mid', 'high'])
+        
+    labels = ['low', 'mid-low', 'mid', 'mid-high', 'high']
+    print("\nClustering interventions by risk...")
+    return fuzzy_cluster_by_attribute(avg_risks, names, labels)
+
 
 ######################################################
 #           Data Classes
@@ -405,6 +364,8 @@ class MaintenanceSchedulingInstance:
         seasons: Dictionary of Season objects keyed by season name.
         interventions: Dictionary of Intervention objects keyed by intervention name.
         exclusions: List of mutual exclusion constraints.
+        size_memberships: DataFrame of fuzzy cluster memberships for intervention sizes.
+        risk_memberships: DataFrame of fuzzy cluster memberships for intervention risks.
     """
     T: int
     scenarios_number: List[int]
@@ -412,6 +373,8 @@ class MaintenanceSchedulingInstance:
     seasons: Dict[str, Season] = field(default_factory=dict)
     interventions: Dict[str, Intervention] = field(default_factory=dict)
     exclusions: List[Exclusion] = field(default_factory=list)
+    size_memberships: 'pd.DataFrame' = field(init=False, default=None)
+    risk_memberships: 'pd.DataFrame' = field(init=False, default=None)
     
     def add_resource(self, resource: Resource):
         self.resources[resource.name] = resource
@@ -511,61 +474,17 @@ class MaintenanceSchedulingInstance:
         else:
             print(f"{pad}    None")
 
-
-
-############################################
-#               ESQUEMA
-############################################
-# Original JSON                           New Python Classes
-# ---------------------------------------------------------------
-# "Resources": {                           ⟶  Resource(name=..., 
-#     "c1": {                                    capacity_min=..., 
-#        "min": [...],                           capacity_max=...)
-#        "max": [...] }
-# }                                       
-
-# "Seasons": {                             ⟶  Season(name="winter", periods=[...])
-#     "winter": [...],                           Season(name="summer", periods=[...])
-#     "summer": [...],                           Season(name="is", periods=[...])
-#     "is": [] }
-                                       
-# "Interventions": {                       ⟶  Intervention(name="I1", tmax=..., 
-#     "I1": {                                      options=[
-#          "tmax": ... ,                              ScheduleOption(start_time=1, duration=...,
-#          "Delta": [...],                              workloads={...}, risks=[...]),
-#          "workload": {                                ScheduleOption(start_time=2, ...),
-#              "c1": {                                    ...
-#                   "1": { ... }, 
-#                   "2": { ... },
-#                   "3": { ... }
-#              }
-#          },
-#          "risk": {                                   ]
-#              "1": { ... },
-#              "2": { ... },
-#              "3": { ... }
-#          }
-#     }
-# }
-                                       
-# "Exclusions": {                          ⟶  Exclusion(interventions=[...], season="...")
-#     "E1": ["I2", "I3", "full"]
-# }
-
-# "T": 3,                                  ⟶  MaintenanceSchedulingInstance.T = 3
-# "Scenarios_number": [3,2,3]               ⟶  MaintenanceSchedulingInstance.scenarios_number = [3,2,3]
-
-
-
-
 # ------------------------------------------------------------------------------
 # Function to load from the original JSON structure into the new object model
 # ------------------------------------------------------------------------------
 
 def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingInstance:
     """
-    Load a MaintenanceSchedulingInstance from a JSON-like dictionary in the original structure.
-    
+    Load a MaintenanceSchedulingInstance from a JSON-like dictionary.
+    This function populates the data classes and, upon completion, automatically
+    runs fuzzy c-means clustering for intervention 'size' and 'risk', storing
+    the membership dataframes in the instance object.
+
     Mapping Overview:
       "T"                ⟶ MaintenanceSchedulingInstance.T
       "Scenarios_number" ⟶ MaintenanceSchedulingInstance.scenarios_number
@@ -597,7 +516,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
     _res_counter = 0
     for res_name, res_data in json_data.get("Resources", {}).items():
         _res_counter += 1
-        print(f"Loading resource {_res_counter} of {_total_resources}: {res_name}")
+        #print(f"Loading resource {_res_counter} of {_total_resources}: {res_name}")
         try:
             resource = Resource(
                 name=res_name,
@@ -616,7 +535,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
     _season_counter = 0
     for season_name, periods in json_data.get("Seasons", {}).items():
         _season_counter += 1
-        print(f"Loading season {_season_counter} of {_total_seasons}: {season_name}")
+        #print(f"Loading season {_season_counter} of {_total_seasons}: {season_name}")
         try:
             season = Season(name=season_name, periods=periods)
             instance.add_season(season)
@@ -632,7 +551,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
     for intv_name, intv_data in json_data.get("Interventions", {}).items():
         _intv_counter += 1
         intv_name = f"I{intv_name.split('_')[1]}" 
-        print(f"Loading intervention {_intv_counter} of {_total_interventions}: {intv_name}")
+        #print(f"Loading intervention {_intv_counter} of {_total_interventions}: {intv_name}")
         try:
             tmax = int(intv_data["tmax"])
         except Exception as e:
@@ -654,7 +573,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
         # Iterate over each possible start time option (using 1-indexing).
         for i, duration in enumerate(delta_list, start=1):
             _option_counter += 1
-            print(f"Loading option {_option_counter} of {_total_options} for intervention {intv_name}")
+            #print(f"Loading option {_option_counter} of {_total_options} for intervention {intv_name}")
             try:
                 option_workloads = {}
                 for res_name, res_workload in workload_data.items():
@@ -696,7 +615,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
             except Exception as e:
                 logger.error(f"Error adding schedule option for intervention '{intv_name}', option {i}: {e}", exc_info=True)
                 continue
-        print(f"Finished loading options for intervention {intv_name}.")
+        #print(f"Finished loading options for intervention {intv_name}.")
         # Compute the overall mean risks list once all options are added.
         intervention.compute_overall_mean_risk()
         intervention.compute_mean_intervention_size()
@@ -714,7 +633,7 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
     _excl_counter = 0
     for excl_key, excl_list in json_data.get("Exclusions", {}).items():
         _excl_counter += 1
-        print(f"Loading exclusion {_excl_counter} of {_total_exclusions}: {excl_key}")
+        #print(f"Loading exclusion {_excl_counter} of {_total_exclusions}: {excl_key}")
         try:
             if excl_list:
                 season = excl_list[-1]
@@ -731,12 +650,12 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
     
     print("Finished loading instance.")
 
-    print("Creating risk and size clusters")
+    print("Creating fuzzy cluster memberships for size and risk...")
     try:
-        instance.size_clusters = cluster_interventions_by_size(instance)
-        instance.risk_clusters = cluster_interventions_by_risk(instance)
+        instance.size_memberships = cluster_interventions_by_size(instance)
+        instance.risk_memberships = cluster_interventions_by_risk(instance)
     except Exception as e:
-            logger.error(f"Error clustering: {e}", exc_info=True)
+        logger.error(f"Error during fuzzy clustering: {e}", exc_info=True)
     return instance
 
 
@@ -744,28 +663,20 @@ def load_instance_from_json(json_data: Dict[str, Any]) -> MaintenanceSchedulingI
 class Solution:
     """
     Represents a solution to the maintenance scheduling problem.
-    
-    Attributes:
-        intervention_starts: Dictionary mapping intervention names to their start times
     """
     intervention_starts: Dict[str, int] = field(default_factory=dict)
 
     def __init__(self, solution_path: str):
         """
         Initialize solution from a text file.
-        
-        Args:
-            solution_path: Path to solution file containing intervention start times
         """
         self.intervention_starts = {}
         try:
             with open(solution_path, 'r') as f:
-                # Skip first line which is empty
                 next(f)
                 for line in f:
                     if line.strip():
                         intervention, start_time = line.strip().split()
-                        # Remove 'Intervention_' prefix if present
                         intervention = intervention.replace('Intervention_', 'I')
                         self.intervention_starts[intervention] = int(start_time)
         except Exception as e:
@@ -776,181 +687,135 @@ class Solution:
     
     def compute_concurrency(self, instance: MaintenanceSchedulingInstance) -> None:
         """
-        Computes and sets the concurrent_interventions and concurrency attributes for the solution.
-
-        The concurrent_interventions attribute is a list of lists of length T (from the instance),
-        where each inner list contains the names of interventions that are active at that timestep.
-        The concurrency attribute is then computed as the length of each inner list.
-
-        Args:
-            instance (MaintenanceSchedulingInstance): The instance containing the planning horizon (T)
-                and interventions.
+        Computes the list of active interventions for each timestep.
         """
-        # Initialize concurrent_interventions as a list of empty lists for each timestep.
         self.concurrent_interventions = [[] for _ in range(int(instance.T))]
-
-        
-        # Iterate over each scheduled intervention in the solution.
         for intervention_name, start_time in self.intervention_starts.items():
-            # Retrieve the corresponding intervention object from the instance.
             intervention = instance.interventions.get(intervention_name)
-            if intervention is None:
-                logger.warning(f"Intervention {intervention_name} not found in instance.")
-                continue
-            
-            # Find the schedule option matching the start_time.
-            matching_option = None
-            for option in intervention.options:
-                if option.start_time == start_time:
-                    matching_option = option
-                    break
-            if matching_option is None:
-                logger.warning(f"No schedule option with start_time {start_time} for intervention {intervention_name}.")
-                continue
-            
-            # Mark the intervention as active for its duration.
-            # Note: timesteps and start times begin at 1; list indices start at 0.
+            if not intervention: continue
+            matching_option = next((opt for opt in intervention.options if opt.start_time == start_time), None)
+            if not matching_option: continue
             for t in range(start_time, start_time + matching_option.duration):
-                #print(f"Duration: {matching_option.duration}, Start Time: {start_time}, Intervention: {intervention_name}, timestep append: {t}")
                 if 1 <= t <= instance.T:
                     self.concurrent_interventions[t - 1].append(intervention_name)
-        
-        # Define concurrency as the number of interventions active at each timestep.
         self.concurrency = [len(interventions) for interventions in self.concurrent_interventions]
         self.highest_concurrency = max(self.concurrency)
     
     def compute_seansonality(self, instance: MaintenanceSchedulingInstance) -> None:
         """
-        Computes and sets the seasonality and season interventions cluster attributes for the solution.
-
-        The seasonality attribute is a dictionary mapping each season name (e.g., 'summer', 'winter', 'is')
-        to the proportion of scheduled interventions that are active in that season.
-        
-        The season_interventions attribute is a dictionary with the same keys as seasonality,
-        where each value is a list of interventions that are active in at least one timestep during that season.
-        
-        Additionally, creates a mapping from timestep to season (timestep_to_season) for use in plotting.
-        
-        Uses the concurrent_interventions attribute, and if it is not computed yet, runs compute_concurrency.
-        
-        Args:
-            instance (MaintenanceSchedulingInstance): The instance containing the planning horizon (T) and seasons.
+        Computes seasonality metrics for the solution.
         """
-        # Ensure concurrency data is available.
-        if not hasattr(self, 'concurrent_interventions'):
-            self.compute_concurrency(instance)
-        
+        if not hasattr(self, 'concurrent_interventions'): self.compute_concurrency(instance)
         total_interventions = len(self.intervention_starts)
-        self.seasonality = {}         # e.g., {'summer': 0.4, 'winter': 0.3, 'is': 0.2}
-        self.season_interventions = {} # e.g., {'summer': ['I1', 'I3'], 'winter': ['I2'], ...}
-        
-        # Iterate over each season defined in the instance.
-        for season_name, season_obj in instance.seasons.items():
-            active_interventions = set()
-            # Loop over the periods (timesteps) belonging to the season.
-            for period in season_obj.periods:
-                try:
-                    period_int = int(period)
-                except ValueError:
-                    logger.error(f"Period value '{period}' in season '{season_name}' is not an integer.")
-                    continue
-                if 1 <= period_int <= len(self.concurrent_interventions):
-                    active_interventions.update(self.concurrent_interventions[period_int - 1])
-            # Compute the proportion of scheduled interventions active during the season.
-            prop = len(active_interventions) / total_interventions if total_interventions > 0 else 0
-            self.seasonality[season_name] = prop
-            self.season_interventions[season_name] = list(active_interventions)
-        
-        # Create a mapping from timestep to season name for plotting.
-        self.timestep_to_season = {}
-        for season_name, season_obj in instance.seasons.items():
-            for period in season_obj.periods:
-                try:
-                    period_int = int(period)
-                except ValueError:
-                    logger.error(f"Period value '{period}' in season '{season_name}' is not an integer.")
-                    continue
-                if 1 <= period_int <= instance.T:
-                    self.timestep_to_season[period_int] = season_name
+        self.seasonality, self.season_interventions = {}, {}
+        for name, season in instance.seasons.items():
+            active_in_season = set()
+            for period in season.periods:
+                if 1 <= int(period) <= len(self.concurrent_interventions):
+                    active_in_season.update(self.concurrent_interventions[int(period) - 1])
+            self.seasonality[name] = len(active_in_season) / total_interventions if total_interventions > 0 else 0
+            self.season_interventions[name] = list(active_in_season)
+        self.timestep_to_season = {int(p): name for name, s in instance.seasons.items() for p in s.periods}
 
 
     def plot_concurrency(self) -> None:
         """
-        Creates a bar plot showing the number of concurrent interventions at each timestep.
-        Bars are colored according to the season in which the timestep falls, if season data is available.
-        If concurrency hasn't been computed yet, prompts user to run compute_concurrency first.
+        Creates a bar plot of concurrent interventions, colored by season.
         """
         if not hasattr(self, 'concurrency'):
-            print("Please run compute_concurrency() first to calculate concurrency data")
+            print("Please run compute_concurrency() first.")
             return
         
-        # If season data is available, assign colors based on season; otherwise, use a default.
-        if not (hasattr(self, 'season_interventions') and hasattr(self, 'timestep_to_season')):
-            colors = ['gray'] * len(self.concurrency)
-        else:
-            # Build a mapping of season name to color.
-            seasons = list(self.season_interventions.keys())
-            default_colors = ['gold', 'skyblue', 'lightgreen', 'salmon', 'plum']
-            color_map = {'winter': 'lightblue', 'summer': 'peachpuff', 'is': 'lightgreen'}
-            
-            # Assign a color for each timestep based on its season.
-            colors = []
-            for t in range(1, len(self.concurrency) + 1):
-                season = self.timestep_to_season.get(t, None)
-                colors.append(color_map.get(season, 'gray'))
+        color_map = {'winter': 'lightblue', 'summer': 'peachpuff', 'is': 'lightgreen'}
+        colors = [color_map.get(self.timestep_to_season.get(t), 'gray') for t in range(1, len(self.concurrency) + 1)]
         
         plt.figure(figsize=(10,6))
         plt.bar(range(1, len(self.concurrency) + 1), self.concurrency, color=colors)
-        plt.xlabel('Timestep')
-        plt.ylabel('Number of Concurrent Interventions')
-        plt.title('Intervention Concurrency Over Time')
+        plt.xlabel('Timestep'); plt.ylabel('Number of Concurrent Interventions'); plt.title('Intervention Concurrency Over Time')
         plt.grid(True, alpha=0.3)
         
-        # Add legend if season data is available.
         if hasattr(self, 'season_interventions'):
             import matplotlib.patches as mpatches
-            patches = [mpatches.Patch(color=color_map[season], label=season) for season in color_map]
+            patches = [mpatches.Patch(color=color_map[s], label=s) for s in color_map if s in self.season_interventions]
             plt.legend(handles=patches, title="Season")
-            
         plt.show()
-
 
     def set_worst_risks(self, instance: MaintenanceSchedulingInstance) -> None:
         """
-        Use self.concurrent_interventions together with the dictionary of distance matrices (intervention-intervention) where each matrix corresponds to the membership values to "close", "mid-close", "mid", "mid-far", "far" (values are these strings, keys are the dataframes that correspond to the matrices) 
-        For each day, take the submatrix containing only the rows and columns corresponding to the intervetions of that day.
-        Then, the submatrix is converted into a mass, which corresponds to the cardinality of that fuzzy relation, by adding all the entries of the triangular upper or lower submatrix without the diagonal (memberships of unique pairs).
-        
-        This gives us a vector of length T and entries the cardinality of the submatrix of each day.
-        This vector is normalized dividing by the total mass and converted into a scalar by computing its entropy (take absolute value, I want it positive because it is a measure of the deviation from the uniform distribution).
-        Finally that scalar is normalized dividing by the entropy of the uniform distribution.
-
-        In the end we get a scalar value for each membership. This will be stored in self.closeness_concurrency, which will be a dictionary with the same keys as dist_mat and with values those scalars.
+        Calculates the mean of the worst-case risks for each scheduled intervention.
         """
         self.worst_risks = []
         self.intervention_worst_risk = {}
-        for intervention_name, start_time in self.intervention_starts.items():
-            # Retrieve the corresponding intervention object from the instance.
-            intervention = instance.interventions.get(intervention_name)
-            if intervention is None:
-                logger.warning(f"Intervention {intervention_name} not found in instance.")
+        for int_name, start_time in self.intervention_starts.items():
+            intervention = instance.interventions.get(int_name)
+            if not intervention: continue
+            option = next((opt for opt in intervention.options if opt.start_time == start_time), None)
+            if not option: continue
+            self.worst_risks.append(option.worst_risk)
+            self.intervention_worst_risk[int_name] = option.worst_risk
+        self.highest_risk = sum(self.worst_risks) / len(self.worst_risks) if self.worst_risks else 0.0
+
+    def _compute_entropy_score_from_mass(self, mass_dict: Dict[str, np.ndarray]) -> Dict[str, float]:
+        """Return a normalized entropy score in [0, 1] for each mass vector.
+
+        1 → vector is uniform (even an all-zero vector counts as uniform)  
+        0 → vector is a Dirac (all the mass in one day)
+        """
+        scores = {}
+        for term, vec in mass_dict.items():
+            total = vec.sum()
+
+            # --- all-zero vector → score 1 (perfectly uniform) -------------
+            if total == 0:
+                scores[term] = 1.0
                 continue
-            
-            # Find the schedule option matching the start_time.
-            matching_option = None
-            for option in intervention.options:
-                if option.start_time == start_time:
-                    matching_option = option
-                    break
-            if matching_option is None:
-                logger.warning(f"No schedule option with start_time {start_time} for intervention {intervention_name}.")
-                continue
-            
-            worst_risk = matching_option.worst_risk
-            self.worst_risks.append(worst_risk)
-            self.intervention_worst_risk[intervention_name] = worst_risk
-        
-        self.highest_risk = sum(self.worst_risks) / len(self.worst_risks) # Taking the mean across all instances' highest risks.
+
+            p  = vec / total
+            nz = p > 0                            # avoid log(0)
+            H  = -np.sum(p[nz] * np.log(p[nz]))   # Shannon entropy
+            H_unif = math.log(nz.sum())           # entropy of the effective uniform
+            scores[term] = H / H_unif if H_unif else 0.0
+
+        return scores
+
+    # def _compute_entropy_score_from_mass(self, mass_dict: Dict[str, np.ndarray]) -> Dict[str, float]:
+    #     """
+    #     Uniformity score based on Jensen-Shannon divergence.
+
+    #         JS(p || u) = ½·KL(p || m) + ½·KL(u || m),   m = ½(p + u)
+    #         score      = 1 - JS(p || u) / ln(2)
+
+    #     • u is the uniform distribution over the *full* vector length T.
+    #     • score ∈ [0, 1]      (natural logs ⇒ JS ≤ ln 2)
+    #         - 1 → perfectly uniform (or all-zero) vector
+    #         - 0 → Dirac vector (all mass in one day)
+    #     """
+    #     ln2 = math.log(2.0)
+    #     scores: Dict[str, float] = {}
+
+    #     for term, vec in mass_dict.items():
+    #         T = len(vec)
+    #         if T <= 1:
+    #             scores[term] = 1.0
+    #             continue
+
+    #         total = vec.sum()
+    #         if total == 0:                   # all-zero vector → treat as uniform
+    #             scores[term] = 1.0
+    #             continue
+
+    #         p = vec / total
+    #         u = np.full(T, 1.0 / T)          # fixed uniform reference
+    #         m = 0.5 * (p + u)
+
+    #         # KL divergences, skipping 0·log0 terms
+    #         kl_pm = np.where(p > 0, p * np.log(p / m), 0.0).sum()
+    #         kl_um = (u * np.log(u / m)).sum()          # u has no zeros
+
+    #         js = 0.5 * (kl_pm + kl_um)
+    #         scores[term] = max(0.0, 1.0 - js / ln2)    # numerical safety
+
+    #     return scores
 
     def dist_matrix_to_closeness_concurrency(self, dist_mat: Dict[str, 'pd.DataFrame']) -> None:  
         """Use self.concurrent_interventions together with the dictionary of distance matrices (intervention-intervention) where each matrix corresponds to the membership values to "close", "mid-close", "mid", "mid-far", "far" (values are these strings, keys are the dataframes that correspond to the matrices) 
@@ -971,7 +836,7 @@ class Solution:
         # --- Prepare an empty mass vector per fuzzy term ----------------
         mass: Dict[str, np.ndarray] = {term: np.zeros(T, dtype=float) for term in terms}
 
-        # --- 1‑B.  Accumulate masses per timestep -----------------------------
+        # --- Accumulate masses per timestep -----------------------------
         for t, active in enumerate(self.concurrent_interventions):
             if len(active) < 2:          # ≤ 1 intervention → no pair to measure
                 continue
@@ -983,22 +848,11 @@ class Solution:
                 tri_sum = sub.values[tri_mask].sum()
                 mass[term][t] = tri_sum
 
-        # --- 1‑C.  Entropy‑based scalar per term -----------------------------
-        self.closeness_concurrency: Dict[str, float] = {}
-        for term, vec in mass.items():
-            total = vec.sum()
-            if total == 0:
-                self.closeness_concurrency[term] = 0.0
-                continue
-            p = vec / total
-            nz = p > 0                    # avoid log(0)
-            H = -np.sum(p[nz] * np.log(p[nz]))
-            # Entropy of the *effective* uniform distribution (non‑zero entries)
-            H_unif = math.log(nz.sum()) if nz.any() else 1.0
-            self.closeness_concurrency[term] = H / H_unif if H_unif > 0 else 0.0
-
         # Save daily masses for plotting purposes
         self._closeness_daily_mass = mass
+
+        # Normalised entropy score (deviation from uniform)
+        self.closeness_concurrency = self._compute_entropy_score_from_mass(mass)
 
     def compute_environmental_impact_concurrency(self, dist_mat: Dict[str, 'pd.DataFrame'], tconorm) -> None:  
         """Use self.concurrent_interventions together with the dictionary of distance matrices (intervention(rows)-park(cols)) where each matrix corresponds to the membership values to "close", "mid-close", "mid", "mid-far", "far" (values are these strings, keys are the dataframes that correspond to the matrices) 
@@ -1015,7 +869,7 @@ class Solution:
         if not hasattr(self, 'concurrent_interventions'):
             raise RuntimeError("Run `compute_concurrency()` first so that `self.concurrent_interventions` is available.")
 
-        # --- 2‑A.  Collapse each membership matrix → vector (length = n_interventions)
+        # --- Collapse each membership matrix → vector (length = n_interventions)
         row_aggs: Dict[str, pd.Series] = {}
         for term, df in dist_mat.items():
             agg = tconorm_aggregate(df, tconorm)            # numpy array
@@ -1024,7 +878,7 @@ class Solution:
         T = len(self.concurrent_interventions)
         mass: Dict[str, np.ndarray] = {term: np.zeros(T, dtype=float) for term in dist_mat}
 
-        # --- 2‑B.  Mass per timestep ----------------------------------------
+        # --- Mass per timestep ----------------------------------------
         for t, active in enumerate(self.concurrent_interventions):
             if not active:
                 continue
@@ -1034,305 +888,193 @@ class Solution:
         # Save daily masses for plotting purposes
         self._env_impact_daily_mass = mass
 
-        # --- 2‑C.  Entropy‑based scalar per term -----------------------------
-        self.environmental_impact_concurrency: Dict[str, float] = {}
-        for term, vec in mass.items():
-            total = vec.sum()
-            if total == 0:
-                self.environmental_impact_concurrency[term] = 0.0
-                continue
-            p = vec / total
-            nz = p > 0
-            H = -np.sum(p[nz] * np.log(p[nz]))
-            H_unif = math.log(nz.sum()) if nz.any() else 1.0
-            self.environmental_impact_concurrency[term] = H / H_unif if H_unif > 0 else 0.0
+        # Normalised entropy score (deviation from uniform)
+        self.environmental_impact_concurrency = self._compute_entropy_score_from_mass(mass)
 
     def compute_size_concurrency(self, instance: MaintenanceSchedulingInstance) -> None:
         """
-        Computes size concurrency for the solution based on the clustering of interventions by mean size.
-        
-        It uses the cluster_interventions_by_size function (with labels 'small', 'mid', 'big') to
-        determine which interventions are in the 'big' and 'mid' clusters.
-        For each timestep, the score is computed as:
-            - (n-1)**2 for interventions in the 'big' cluster (only if n > 0)
-            - (m-1) for interventions in the 'mid' cluster (only if m > 0)
-        The per-timestep lists are stored in self.big_size_concurrent_interventions and 
-        self.mid_size_concurrent_interventions, and the overall score in self.size_concurrency.
-        
-        Args:
-            instance (MaintenanceSchedulingInstance): The instance containing the interventions.
+        Computes size concurrency based on fuzzy c-means memberships.
+
+        For each of the 5 size clusters (e.g., 'small', 'large'), it calculates a daily "mass"
+        by summing the membership values of all active interventions for that day. This results
+        in a daily mass vector for each cluster. These vectors are stored in `_size_daily_mass`
+        for plotting.
+
+        Finally, it computes a single scalar score for each cluster's mass vector using a normalized
+        entropy measure, which indicates how evenly the concurrency mass is distributed over time.
+        These scores are stored in the `size_concurrency` dictionary.
         """
-        # Ensure concurrency data is available.
-        if not hasattr(self, 'concurrent_interventions'):
-            print("Please run compute_concurrency() first to calculate concurrency data")
-            return
+        if not hasattr(self, 'concurrent_interventions'): self.compute_concurrency(instance)
+        if instance.size_memberships is None:
+            raise ValueError("Size memberships not found in instance. Run `load_instance_from_json` first.")
 
-        # Compute clustering dictionary for sizes (keys: 'small', 'mid', 'big')
-        size_clusters = instance.size_clusters
+        T = len(self.concurrent_interventions)
+        memberships_df = instance.size_memberships
+        labels = memberships_df.columns.tolist()
+        
+        mass = {label: np.zeros(T) for label in labels}
+        for t, active_interventions in enumerate(self.concurrent_interventions):
+            if not active_interventions:
+                continue
+            # Ensure all active interventions are in the membership index
+            valid_active = [iv for iv in active_interventions if iv in memberships_df.index]
+            if not valid_active:
+                continue
 
-        self.big_size_concurrent_interventions = []
-        self.mid_size_concurrent_interventions = []
-        self.size_concurrency = 0.0
+            daily_masses = memberships_df.loc[valid_active].sum(axis=0)
+            for label in labels:
+                mass[label][t] = daily_masses[label]
 
-        for interventions in self.concurrent_interventions:
-            # Filter interventions that are in the 'big' and 'mid' clusters.
-            big_list = [i for i in interventions if i in size_clusters.get('big', [])]
-            mid_list = [i for i in interventions if i in size_clusters.get('mid', [])]
-            
-            self.big_size_concurrent_interventions.append(big_list)
-            self.mid_size_concurrent_interventions.append(mid_list)
-            
-            n = len(big_list)
-            m = len(mid_list)
-            # Score: (n-1)**2 for big and (m-1) for mid (only if count > 0)
-            score_big = (max(n - 1, 0))**2
-            score_mid = max(m - 1, 0)
-            self.size_concurrency += score_big + score_mid
+        self._size_daily_mass = mass
+        self.size_concurrency = self._compute_entropy_score_from_mass(mass)
 
 
     def compute_risk_concurrency(self, instance: MaintenanceSchedulingInstance) -> None:
         """
-        Computes risk concurrency for the solution based on the clustering of interventions by average risk.
-        
-        It uses the cluster_interventions_by_risk function (with labels 'low', 'mid', 'high') to
-        determine which interventions fall into the 'high' and 'mid' risk clusters.
-        For each timestep, the score is computed as:
-            - (n-1)**2 for interventions in the 'high' cluster (only if n > 0)
-            - (m-1) for interventions in the 'mid' cluster (only if m > 0)
-        The per-timestep lists are stored in self.high_risk_concurrent_interventions and 
-        self.mid_risk_concurrent_interventions, and the overall score in self.risk_concurrency.
-        
-        Args:
-            instance (MaintenanceSchedulingInstance): The instance containing the interventions.
+        Computes risk concurrency based on fuzzy c-means memberships.
+
+        This method mirrors `compute_size_concurrency` but uses the risk cluster memberships.
+        It calculates a daily mass for each of the 5 risk clusters ('low', 'high', etc.)
+        and stores them in `_risk_daily_mass`. It then computes a normalized entropy score
+        for each cluster, storing the results in the `risk_concurrency` dictionary.
         """
-        # Ensure concurrency data is available.
-        if not hasattr(self, 'concurrent_interventions'):
-            print("Please run compute_concurrency() first to calculate concurrency data")
-            return
-
-        # Compute clustering dictionary for risks (keys: 'low', 'mid', 'high')
-        risk_clusters = instance.risk_clusters
-
-        self.high_risk_concurrent_interventions = []
-        self.mid_risk_concurrent_interventions = []
-        self.risk_concurrency = 0.0
-
-        for interventions in self.concurrent_interventions:
-            # Filter interventions that are in the 'high' and 'mid' risk clusters.
-            high_list = [i for i in interventions if i in risk_clusters.get('high', [])]
-            mid_list = [i for i in interventions if i in risk_clusters.get('mid', [])]
-            
-            self.high_risk_concurrent_interventions.append(high_list)
-            self.mid_risk_concurrent_interventions.append(mid_list)
-            
-            n = len(high_list)
-            m = len(mid_list)
-            # Score: (n-1)**2 for high and (m-1) for mid (only if count > 0)
-            score_high = (max(n - 1, 0))**2
-            score_mid = max(m - 1, 0)
-            self.risk_concurrency += score_high + score_mid
-
-
-    def plot_all_concurrency_details(self) -> None:
-        """
-        Creates informative plots of the concurrency levels of size, environmental impact,
-        risk, and closeness at each timestep, with background colored boxes indicating the season
-        for each contiguous chunk of timesteps (using self.timestep_to_season).
-
-        For each attribute, two grouped bar charts (one for the "high" group and one for the "mid" group)
-        are plotted in a 2x2 grid of subplots. The background for each subplot is annotated with
-        season labels using the same color palette as in plot_concurrency.
-        """
-        # Ensure that concurrency data is available.
-        if not hasattr(self, 'concurrent_interventions'):
-            print("Please run compute_concurrency() first to calculate concurrency data.")
-            return
+        if not hasattr(self, 'concurrent_interventions'): self.compute_concurrency(instance)
+        if instance.risk_memberships is None:
+            raise ValueError("Risk memberships not found in instance. Run `load_instance_from_json` first.")
 
         T = len(self.concurrent_interventions)
+        memberships_df = instance.risk_memberships
+        labels = memberships_df.columns.tolist()
+
+        mass = {label: np.zeros(T) for label in labels}
+        for t, active_interventions in enumerate(self.concurrent_interventions):
+            if not active_interventions:
+                continue
+            valid_active = [iv for iv in active_interventions if iv in memberships_df.index]
+            if not valid_active:
+                continue
+            
+            daily_masses = memberships_df.loc[valid_active].sum(axis=0)
+            for label in labels:
+                mass[label][t] = daily_masses[label]
+
+        self._risk_daily_mass = mass
+        self.risk_concurrency = self._compute_entropy_score_from_mass(mass)
+
+    def plot_all_concurrency_details(self) -> None:
+        """Creates a 2x2 grid of stacked bar plots for all four concurrency masses."""
+        required_attrs = ['_size_daily_mass', '_risk_daily_mass', '_closeness_daily_mass', '_env_impact_daily_mass']
+        if not all(hasattr(self, attr) for attr in required_attrs):
+            print("Please run all four concurrency calculation methods first.")
+            return
+        if not hasattr(self, 'timestep_to_season'):
+             print("Please run `compute_seansonality()` first.")
+             return
+
+        fig, axes = plt.subplots(2, 2, figsize=(18, 12), sharex=True)
+        fig.suptitle("Daily Concurrency Mass by Fuzzy Category", fontsize=16)
+        T = len(self.concurrent_interventions)
         timesteps = np.arange(1, T + 1)
-        width = 0.35  # width of the grouped bars
-
-        # Prepare counts for each attribute based on the per-timestep lists.
-        size_high     = np.array([len(lst) for lst in self.big_size_concurrent_interventions])
-        size_mid      = np.array([len(lst) for lst in self.mid_size_concurrent_interventions])
-
-        env_high      = np.array([len(lst) for lst in self.high_env_imp_concurrent_interventions])
-        env_mid       = np.array([len(lst) for lst in self.mid_env_imp_concurrent_interventions])
-
-        risk_high     = np.array([len(lst) for lst in self.high_risk_concurrent_interventions])
-        risk_mid      = np.array([len(lst) for lst in self.mid_risk_concurrent_interventions])
-
-        closeness_high = np.array([len(lst) for lst in self.close_concurrent_interventions])
-        closeness_mid  = np.array([len(lst) for lst in self.mid_concurrent_interventions])
-
-        # Compute contiguous season intervals from self.timestep_to_season.
-        # Each interval is a tuple: (season, start_timestep, end_timestep)
+        
+        color_map_seasons = {'winter': 'lightblue', 'summer': 'peachpuff', 'is': 'lightgreen'}
         season_intervals = []
-        current_season = None
-        start = None
-        for t in range(1, T + 1):
-            season = self.timestep_to_season.get(t, None)
-            if season != current_season:
-                if current_season is not None:
-                    season_intervals.append((current_season, start, t - 1))
-                current_season = season
-                start = t
-        if current_season is not None:
-            season_intervals.append((current_season, start, T))
-
-        # Define the season color palette (same as in plot_concurrency).
-        color_map = {'winter': 'lightblue', 'summer': 'peachpuff', 'is': 'lightgreen'}
+        if self.timestep_to_season:
+            for season, group in itertools.groupby(sorted(self.timestep_to_season.items()), key=lambda item: item[1]):
+                timesteps_in_season = [item[0] for item in group]
+                season_intervals.append((season, min(timesteps_in_season), max(timesteps_in_season)))
 
         def add_season_background(ax):
-            """
-            For the given axis, add a background rectangle (using axvspan) for each season interval.
-            The rectangle covers from (start - 0.5) to (end + 0.5) in x-coordinates.
-            Also, adds the season label at the center of the rectangle.
-            """
-            for season, s, e in season_intervals:
-                if season is None:
-                    continue
-                xmin = s - 0.5
-                xmax = e + 0.5
-                # Draw a background rectangle with a low alpha so that the bars remain visible.
-                ax.axvspan(xmin, xmax, facecolor=color_map.get(season, 'gray'), alpha=0.5, zorder=0)
-                # Place the season label in the center of the interval.
-                x_text = (xmin + xmax) / 2
-                ylim = ax.get_ylim()
-                # Position the text near the top of the plotting area.
-                y_text = ylim[1] - (ylim[1] - ylim[0]) * 0.05
-                ax.text(x_text, y_text, season, ha='center', va='top', fontsize=8, color='black', zorder=3)
+            y_lim = ax.get_ylim()
+            for season, start, end in season_intervals:
+                ax.axvspan(start - 0.5, end + 0.5, facecolor=color_map_seasons.get(season, 'gray'), alpha=0.3, zorder=0)
+                ax.text((start + end) / 2, y_lim[1] * 0.95, season, ha='center', va='top', fontsize=9)
+            ax.set_ylim(y_lim) # Reset ylim after adding text
 
-        # Create a 2x2 grid of subplots.
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle("Detailed Concurrency Levels per Timestep with Seasons", fontsize=16)
+        def plot_stacked_bar(ax, mass_data, title):
+            bottom = np.zeros(T)
+            for label, mass_vector in mass_data.items():
+                ax.bar(timesteps, mass_vector, bottom=bottom, label=label, zorder=2)
+                bottom += mass_vector
+            ax.set_ylabel("Total Membership (Mass)")
+            ax.set_title(title)
+            ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
+            ax.grid(axis='y', linestyle='--', alpha=0.7)
+            add_season_background(ax)
 
-        # Plot Size Concurrency.
-        ax = axes[0, 0]
-        ax.bar(timesteps - width/2, size_high, width, label='Big', color='blue', zorder=2)
-        ax.bar(timesteps + width/2, size_mid, width, label='Mid', color='orange', zorder=2)
-        ax.set_xlabel("Timestep")
-        ax.set_ylabel("Count")
-        ax.set_title("Size Concurrency")
-        add_season_background(ax)
-        # Place legend outside the plot area so it doesn't overlap the season text.
-        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0.)
+        plot_stacked_bar(axes[0, 0], self._size_daily_mass, "Size Concurrency Mass")
+        plot_stacked_bar(axes[0, 1], self._risk_daily_mass, "Risk Concurrency Mass")
+        plot_stacked_bar(axes[1, 0], self._closeness_daily_mass, "Closeness Concurrency Mass")
+        plot_stacked_bar(axes[1, 1], self._env_impact_daily_mass, "Environmental Impact Concurrency Mass")
 
-        # Plot Environmental Impact Concurrency.
-        ax = axes[0, 1]
-        ax.bar(timesteps - width/2, env_high, width, label='High Env Impact', color='blue', zorder=2)
-        ax.bar(timesteps + width/2, env_mid, width, label='Mid Env Impact', color='orange', zorder=2)
-        ax.set_xlabel("Timestep")
-        ax.set_ylabel("Count")
-        ax.set_title("Environmental Impact Concurrency")
-        add_season_background(ax)
-        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0.)
-
-        # Plot Risk Concurrency.
-        ax = axes[1, 0]
-        ax.bar(timesteps - width/2, risk_high, width, label='High Risk', color='blue', zorder=2)
-        ax.bar(timesteps + width/2, risk_mid, width, label='Mid Risk', color='orange', zorder=2)
-        ax.set_xlabel("Timestep")
-        ax.set_ylabel("Count")
-        ax.set_title("Risk Concurrency")
-        add_season_background(ax)
-        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0.)
-
-        # Plot Closeness Concurrency.
-        ax = axes[1, 1]
-        ax.bar(timesteps - width/2, closeness_high, width, label='Close Pairs', color='blue', zorder=2)
-        ax.bar(timesteps + width/2, closeness_mid, width, label='Mid Pairs', color='orange', zorder=2)
-        ax.set_xlabel("Timestep")
-        ax.set_ylabel("Count")
-        ax.set_title("Closeness Concurrency")
-        add_season_background(ax)
-        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0.)
-
-        plt.tight_layout(rect=[0, 0, 0.95, 0.96])
+        axes[1, 0].set_xlabel("Timestep"); axes[1, 1].set_xlabel("Timestep")
+        plt.tight_layout(rect=[0, 0, 0.9, 0.96])
         plt.show()
-
 
 
 # ---------------------------
 # Example usage:
 # ---------------------------
 if __name__ == "__main__":
-    #Load Json
-    json_path = 'Decision Matrix/Problem setups/C_01.json'
-    with open(json_path, "r") as f:
-        data = json.load(f)
-
-    # Example JSON (could be loaded from a file) in the original format:
-    example_json = {
-        "T": 7,
-        "Scenarios_number": [3, 2, 3], # Numero de escenarios para cada t, lista de longitud T
-        "Resources": {
-            "c1": {
-                "min": [10.0, 0.0, 6.0],
-                "max": [49.0, 23.0, 15.0]
-            }
-        },
-        "Seasons": {
-            "winter": [1, 2],
-            "summer": [3],
-            "is": []
-        },
-        "Interventions": {
-            "I1": {
-                "tmax": 1,
-                "Delta": [3, 3, 2], #Duration depending on the start time.
-                "workload": {
-                    "c1": {
-                        "2": {"1": 14, "2": 0, "3": 1}, #tstep: {st : workload needed of that resource}
-                        "3": {"1": 0, "2": 14, "3": 1},
-                        "4": {"1": 0, "2": 0, "3": 14}
-                    }
-                }, 
-                "risk": {
-                    "2": {"1": [4, 8, 2], "2": [0, 0, 0]}, #tstep:{st : risk for each scenario (list of length scenario number for that timestep)}
-                    "3": {"1": [0, 0], "2": [3, 8]},
-                    "4": {"1": [0, 0, 0], "2": [0, 0, 0]}
-                }
-            }
-        },
-        "Exclusions": {
-            "E1": ["I2", "I3", "full"]
-        }
-    }
+    json_path = 'Decision Matrix\Difficult Instances\X_12.json' 
+    solution_path = 'Decision Matrix\Alternatives\X12\Team1\sol300_t1_X_12_s42.txt' 
     
-    # Load instance from JSON.
-    instance = load_instance_from_json(data)
+    # 1. Load Instance JSON
+    try:
+        with open(json_path, "r") as f:
+            data = json.load(f)
+        instance = load_instance_from_json(data)
+    except FileNotFoundError:
+        print(f"ERROR: Instance file not found at '{json_path}'. Exiting.")
+        exit()
 
-    #print(instance.interventions.get("I135").name)
-    #print(f"# interventions: {len(instance.interventions)}")
-
-    # Print the instance with detailed metrics.
-    #instance.show()
-
-    # Test loading solution from file
-    solution_path = 'Decision Matrix/Alternatives/1/solution_C_01_900.txt'
-    
+    # 2. Load Solution
     sol = Solution(solution_path)
-    
-    print(max(sol.intervention_starts.values()))
+    if not sol.intervention_starts:
+        print("ERROR: Solution could not be loaded or is empty. Exiting.")
+        exit()
 
+    # 3. Load Fuzzy Distance Matrices
+    import pickle
+    try:
+        with open('interv_mems.pkl', 'rb') as f:
+            interv_mems = pickle.load(f)
+        with open('park_mems.pkl', 'rb') as f:
+            park_mems = pickle.load(f)
+        print("Successfully loaded fuzzy distance matrices from .pkl files.")
+    except FileNotFoundError:
+        print("ERROR: Could not find 'interv_mems.pkl' or 'park_mems.pkl'.")
+        print("Cannot compute closeness or environmental impact concurrency. Exiting.")
+        exit()
+
+    # 4. Compute all metrics
+    print("\nComputing all concurrency metrics...")
     sol.compute_concurrency(instance)
-
-
-    # print(f"Concurrency:\n{sol.concurrency}")
-    sol.plot_concurrency()
-    #print(f"\n\nConcurrent Interventions:\n{sol.concurrent_interventions}")
     sol.compute_seansonality(instance)
+    sol.compute_size_concurrency(instance)
+    sol.compute_risk_concurrency(instance)
+    sol.dist_matrix_to_closeness_concurrency(interv_mems)
+    sol.compute_environmental_impact_concurrency(park_mems, tconorm=np.maximum)
+    print("Computation complete.")
 
-    print(sol.seasonality) #! Does not add to 1 since there are multiple interventions spanning various seasons.
-    sol.plot_concurrency()
+    # 5. Print the final entropy scores
+    print("\n" + "="*40)
+    print("      FINAL CONCURRENCY ENTROPY SCORES")
+    print("="*40)
+    
+    def print_scores(title, scores_dict):
+        print(f"\n--- {title} ---")
+        if not scores_dict:
+            print("  No scores calculated.")
+            return
+        for label, score in scores_dict.items():
+            print(f"  {label:<15}: {score:.4f}")
 
-    sol.set_worst_risks(instance)
+    print_scores("Size Concurrency", sol.size_concurrency)
+    print_scores("Risk Concurrency", sol.risk_concurrency)
+    print_scores("Closeness Concurrency", sol.closeness_concurrency)
+    print_scores("Environmental Impact Concurrency", sol.environmental_impact_concurrency)
+    print("="*40)
 
-    print(sol.worst_risks)
-
-    # Print mean intervention sizes
-    # print("\nIntervention mean sizes:")
-    # for intervention in instance.interventions.values():
-    #     intervention.compute_mean_intervention_size()
-    #     print(f"{intervention.name}: {intervention.mean_intervention_size:.2f}")
+    # 6. Plot the results
+    print("\nGenerating concurrency plots...")
+    sol.plot_all_concurrency_details()
