@@ -33,7 +33,7 @@ import pandas as pd
 from pyproj import Transformer
 from shapely import wkt
 
-from fuzzy_var import FuzzyVariable
+from fuzzy_var import FuzzyVariable, tconorm_aggregate
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -291,22 +291,6 @@ def plot_france_regions_parks_interventions(
 # ---------------------------------------------------------------------------
 # ❷ 2-D France  |  gradient = fuzzy proximity (intervention → parks)
 # ---------------------------------------------------------------------------
-def _tconorm_aggregate(df: pd.DataFrame, s_norm) -> np.ndarray:
-    """
-    Aggregate every row (intervention) across *all* park columns with `s_norm`.
-
-    Returns a 1-D array of length = n_interventions.
-    Safe against duplicate column labels because it operates on `.values`.
-    """
-    if df.shape[1] == 0:
-        raise ValueError("Membership table has no columns to aggregate.")
-
-    vals = df.values                    # shape = (n_rows, n_cols)
-    agg   = vals[:, 0]                  # first column → 1-D
-    for j in range(1, vals.shape[1]):
-        agg = s_norm(agg, vals[:, j])   # still 1-D
-    return agg
-
 def plot_intervention_park_gradient(
     raw_points: np.ndarray,
     point_keys: list[str],
@@ -325,7 +309,7 @@ def plot_intervention_park_gradient(
     pts_gdf        = _to_points_gdf(pts_scaled_deg, france_gdf)
 
     df_close = park_memberships["close"]
-    μ_close  = _tconorm_aggregate(df_close, s_norm)
+    μ_close  = tconorm_aggregate(df_close, s_norm)
 
     colours = cmap(μ_close)
 

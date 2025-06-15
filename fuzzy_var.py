@@ -37,6 +37,22 @@ def s_norm_lukas(a: dtype, b: dtype) -> dtype:
     """Lukasiewicz t-conorm: S(a,b) = min(1, a + b)."""
     return np.minimum(a + b, 1.0)
 
+def tconorm_aggregate(df: pd.DataFrame, s_norm) -> np.ndarray:
+    """
+    Aggregate every row (intervention) across *all* park columns with `s_norm`.
+
+    Returns a 1-D array of length = n_interventions.
+    Safe against duplicate column labels because it operates on `.values`.
+    """
+    if df.shape[1] == 0:
+        raise ValueError("Membership table has no columns to aggregate.")
+
+    vals = df.values                    # shape = (n_rows, n_cols)
+    agg   = vals[:, 0]                  # first column → 1-D
+    for j in range(1, vals.shape[1]):
+        agg = s_norm(agg, vals[:, j])   # still 1-D
+    return agg
+
 # --- fuzzy membership functions ---
 
 def triangular_mf(a: float, m: float, b: float) -> MembershipFunction:
