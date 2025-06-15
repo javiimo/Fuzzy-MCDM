@@ -186,6 +186,21 @@ def cluster_interventions_by_risk(instance) -> Dict[str, List[str]]:
     return cluster_by_attribute(avg_risks, names, ['low', 'mid', 'high'])
 
 
+######################################################
+#               Clustering Functions
+######################################################
+
+import skfuzzy as fuzz
+
+def fuzz_dist(a,b,c,d,e):
+    temperature['cold']   = 
+temperature['warm']   = fuzz.trimf(x, [10, 20, 30])
+temperature['hot']    = fuzz.trapmf(x, [25, 30, 40, 40])
+    return dist = {
+        'close' : fuzz.trapmf(x, [0, 0, a, b]),
+        'mid-close' : fuzz.trimf(x, [10, 20, 30])
+    }
+
 
 
 ######################################################
@@ -920,9 +935,15 @@ class Solution:
 
     def set_worst_risks(self, instance: MaintenanceSchedulingInstance) -> None:
         """
-        For each intervention in the solution, find the scheduling option (using the start time)
-        and record its worst_risk. Stores the worst risks in a list called 'worst_risks' and
-        in a dictionary 'intervention_worst_risk' mapping each intervention to its worst risk.
+        Use self.concurrent_interventions together with the dictionary of distance matrices (intervention-intervention) where each matrix corresponds to the membership values to "close", "mid-close", "mid", "mid-far", "far" (values are these strings, keys are the dataframes that correspond to the matrices) 
+        For each day, take the submatrix containing only the rows and columns corresponding to the intervetions of that day.
+        Then, the submatrix is converted into a mass, which corresponds to the cardinality of that fuzzy relation, by adding all the entries of the triangular upper or lower submatrix without the diagonal (memberships of unique pairs).
+        
+        This gives us a vector of length T and entries the cardinality of the submatrix of each day.
+        This vector is normalized dividing by the total mass and converted into a scalar by computing its entropy (take absolute value, I want it positive because it is a measure of the deviation from the uniform distribution).
+        Finally that scalar is normalized dividing by the entropy of the uniform distribution.
+
+        In the end we get a scalar value for each membership. This will be stored in self.closeness_concurrency, which will be a dictionary with the same keys as dist_mat and with values those scalars.
         """
         self.worst_risks = []
         self.intervention_worst_risk = {}
@@ -949,17 +970,114 @@ class Solution:
         
         self.highest_risk = sum(self.worst_risks) / len(self.worst_risks) # Taking the mean across all instances' highest risks.
 
+    def dist_matrix_to_closeness_concurrency(self, dist_mat: Dict[str, 'pd.DataFrame']) -> None:  
+        """Use self.concurrent_interventions together with the dictionary of distance matrices (intervention-intervention) where each matrix corresponds to the membership values to "close", "mid-close", "mid", "mid-far", "far" (values are these strings, keys are the dataframes that correspond to the matrices) 
+        For each day, take the submatrix containing only the rows and columns corresponding to the intervetions of that day.
+        Then, the submatrix is converted into a mass, which corresponds to the cardinality of that fuzzy relation, by adding all the entries of the triangular upper or lower submatrix without the diagonal (memberships of unique pairs).
+        
+        This gives us a vector of length T and entries the cardinality of the submatrix of each day.
+        This vector is normalized dividing by the total mass and converted into a scalar by computing its entropy (take absolute value, I want it positive because it is a measure of the deviation from the uniform distribution).
+        Finally that scalar is normalized dividing by the entropy of the uniform distribution.
+
+        In the end we get a scalar value for each membership. This will be stored in self.closeness_concurrency, which will be a dictionary with the same keys as dist_mat and with values those scalars."""
+
+        if not hasattr(self, 'concurrent_interventions'):
+            raise RuntimeError("Run `compute_concurrency()` first so that `self.concurrent_interventions` is available.")
+
+        T = len(self.concurrent_interventions)
+        terms = list(dist_mat.keys())
+        # --- Prepare an empty mass vector per fuzzy term ----------------
+        mass: Dict[str, np.ndarray] = {term: np.zeros(T, dtype=float) for term in terms}
+
+        # --- 1‑B.  Accumulate masses per timestep -----------------------------
+        for t, active in enumerate(self.concurrent_interventions):
+            if len(active) < 2:          # ≤ 1 intervention → no pair to measure
+                continue
+            for term, df in dist_mat.items():
+                # restrict to the active interventions *in the same order* as df
+                sub = df.loc[active, active]
+                # keep upper‑triangular part (excluding diagonal)
+                tri_mask = np.triu(np.ones(sub.shape, dtype=bool), k=1)
+                tri_sum = sub.values[tri_mask].sum()
+                mass[term][t] = tri_sum
+
+        # --- 1‑C.  Entropy‑based scalar per term -----------------------------
+        self.closeness_concurrency: Dict[str, float] = {}
+        for term, vec in mass.items():
+            total = vec.sum()
+            if total == 0:
+                self.closeness_concurrency[term] = 0.0
+                continue
+            p = vec / total
+            nz = p > 0                    # avoid log(0)
+            H = -np.sum(p[nz] * np.log(p[nz]))
+            # Entropy of the *effective* uniform distribution (non‑zero entries)
+            H_unif = math.log(nz.sum()) if nz.any() else 1.0
+            self.closeness_concurrency[term] = H / H_unif if H_unif > 0 else 0.0
+
+        # Save daily masses for plotting purposes
+        self._closeness_daily_mass = mass
+
+    def compute_environmental_impact_concurrency(self, dist_mat: Dict[str, 'pd.DataFrame'], tconorm) -> None:  
+        """Use self.concurrent_interventions together with the dictionary of distance matrices (intervention(rows)-park(cols)) where each matrix corresponds to the membership values to "close", "mid-close", "mid", "mid-far", "far" (values are these strings, keys are the dataframes that correspond to the matrices) 
+        Collapse the matrix into a vector by applying the t-conorm to each row, so that we get a unique value for each intervention (you can use tconorm_aggregate from fuzzy_var)
+        For each day, take the subvector containing only the rows corresponding to the intervetions of that day.
+        Then, the subvector is converted into a mass, which corresponds to the cardinality of that fuzzy set, by adding all the entries (memberships).
+        
+        This gives us a vector of length T and entries the cardinality of the subvectors of each day.
+        This vector is normalized dividing by the total mass and converted into a scalar by computing its entropy (take absolute value, I want it positive because it is a measure of the deviation from the uniform distribution).
+        Finally that scalar is normalized dividing by the entropy of the uniform distribution.
+
+        In the end we get a scalar value for each membership. This will be stored in self.closeness_concurrency, which will be a dictionary with the same keys as dist_mat and with values those scalars."""
+
+        if not hasattr(self, 'concurrent_interventions'):
+            raise RuntimeError("Run `compute_concurrency()` first so that `self.concurrent_interventions` is available.")
+
+        # --- 2‑A.  Collapse each membership matrix → vector (length = n_interventions)
+        row_aggs: Dict[str, pd.Series] = {}
+        for term, df in dist_mat.items():
+            agg = tconorm_aggregate(df, tconorm)            # numpy array
+            row_aggs[term] = pd.Series(agg, index=df.index)  # Series: μ(term | intervention)
+
+        T = len(self.concurrent_interventions)
+        mass: Dict[str, np.ndarray] = {term: np.zeros(T, dtype=float) for term in dist_mat}
+
+        # --- 2‑B.  Mass per timestep ----------------------------------------
+        for t, active in enumerate(self.concurrent_interventions):
+            if not active:
+                continue
+            for term, series in row_aggs.items():
+                mass[term][t] = series.loc[active].sum()
+        
+        # Save daily masses for plotting purposes
+        self._env_impact_daily_mass = mass
+
+        # --- 2‑C.  Entropy‑based scalar per term -----------------------------
+        self.environmental_impact_concurrency: Dict[str, float] = {}
+        for term, vec in mass.items():
+            total = vec.sum()
+            if total == 0:
+                self.environmental_impact_concurrency[term] = 0.0
+                continue
+            p = vec / total
+            nz = p > 0
+            H = -np.sum(p[nz] * np.log(p[nz]))
+            H_unif = math.log(nz.sum()) if nz.any() else 1.0
+            self.environmental_impact_concurrency[term] = H / H_unif if H_unif > 0 else 0.0
+
+        
+
     def dist_matrix_to_closeness_concurrency(self, dist_mat) -> None:
         """
-        Use self.concurrent_interventions together with the distance matrix (pandas dataframe with col and row names
-        of the intervention taking place and elements with 3 possible values of strings: close, mid, far) to determine the
-        number of simultaneous close interventions taking place at each timestep. Store this into 
-        self.close_concurrent_interventions as a list of length T where each element is a list of unique pairs (sets) 
-        (notice the symmetry in the distance matrix) of close interventions taking place at that timestep. Do the same 
-        analogously for the mid distance into self.mid_concurrent_interventions.
-        Then compute the self.closeness_concurrency which is a score computed as follows:
-            - Each close pair adds 1
-            - Each mid pair adds 0.5
+        Use self.concurrent_interventions together with the dictionary of distance matrices (intervention-intervention) where each matrix corresponds to the membership values to "close", "mid-close", "mid", "mid-far", "far" (values are these strings, keys are the dataframes that correspond to the matrices) 
+        For each day, take the submatrix containing only the rows and columns corresponding to the intervetions of that day.
+        Then, the submatrix is converted into a mass, which corresponds to the cardinality of that fuzzy relation, by adding all the entries of the triangular upper or lower submatrix without the diagonal (memberships of unique pairs).
+        
+        This gives us a vector of length T and entries the cardinality of the submatrix of each day.
+        This vector is normalized dividing by the total mass and converted into a scalar by computing its entropy (take absolute value, I want it positive because it is a measure of the deviation from the uniform distribution).
+        Finally that scalar is normalized dividing by the entropy of the uniform distribution.
+
+        In the end we get a scalar value for each membership. This will be stored in self.closeness_concurrency, which will be a dictionary with the same keys as dist_mat and with values those scalars.
         """
         # Check if concurrency data is computed.
         if not hasattr(self, 'concurrent_interventions'):
@@ -990,17 +1108,18 @@ class Solution:
             self.closeness_concurrency += len(close_pairs) + 0.5 * len(mid_pairs)
 
 
-    def compute_environmental_impact_concurrency(self, env_imp_dict) -> None:
+    def compute_environmental_impact_concurrency(self, dist_mat, tconorm) -> None:
         """
-        env_imp_dict is a dictionary of keys: 'high', 'mid', 'low'. And values: lists of intervention names I1, I2, I3,...
-        Create a score that will be saved at self.env_impact which is computed analogous to the concurrency of close 
-        interventions. This time we do not have pairs, we have just 3 groups. The variables 
-        self.high_env_imp_concurrent_interventions and self.mid_env_imp_concurrent_interventions are created as lists of 
-        length T where each element is a list containing the intervention names that are high or mid ongoing at that 
-        timestep. Finally, the env_impact_concurrency is computed by:
-            Let n and m be the number of concurrent interventions at a given timestep for high and mid respectively:
-                - Add (n-1)**2 to the env_impact_concurrency (only if n > 0, otherwise 0)
-                - Add (m-1) to the env_impact_concurrency (only if m > 0, otherwise 0)
+        Use self.concurrent_interventions together with the dictionary of distance matrices (intervention(rows)-park(cols)) where each matrix corresponds to the membership values to "close", "mid-close", "mid", "mid-far", "far" (values are these strings, keys are the dataframes that correspond to the matrices) 
+        Collapse the matrix into a vector by applying the t-conorm to each row, so that we get a unique value for each intervention (you can use tconorm_aggregate from fuzzy_var)
+        For each day, take the subvector containing only the rows corresponding to the intervetions of that day.
+        Then, the subvector is converted into a mass, which corresponds to the cardinality of that fuzzy set, by adding all the entries (memberships).
+        
+        This gives us a vector of length T and entries the cardinality of the subvectors of each day.
+        This vector is normalized dividing by the total mass and converted into a scalar by computing its entropy (take absolute value, I want it positive because it is a measure of the deviation from the uniform distribution).
+        Finally that scalar is normalized dividing by the entropy of the uniform distribution.
+
+        In the end we get a scalar value for each membership. This will be stored in self.closeness_concurrency, which will be a dictionary with the same keys as dist_mat and with values those scalars.
         """
         # Check if concurrency data is computed.
         if not hasattr(self, 'concurrent_interventions'):
