@@ -509,48 +509,56 @@ if __name__ == "__main__":
     interv_mems = build_fuzzy_intervention_distance(pts, point_keys, fuzzy_interv)
     park_mems = build_fuzzy_intervention_park_distance(pts, point_keys, parks_gdf, fuzzy_parks)
 
-    # Summary of all terms
-    print("--- Fuzzy membership summary ---")
-    for label, mems in [("Intervention×Intervention", interv_mems), ("Intervention×Park", park_mems)]:
-        print(f"{label} terms:")
-        for term, df in mems.items():
-            print(f"  • {term:10s}: shape={df.shape}, values ∈ [{df.values.min():.3f}, {df.values.max():.3f}]")
+    import pickle
+    with open('interv_mems.pkl', 'wb') as f:
+        pickle.dump(interv_mems, f)
+    with open('park_mems.pkl', 'wb') as f:
+        pickle.dump(park_mems, f)
 
-    # === Plot heatmaps for all fuzzy terms ===
-    import matplotlib.pyplot as plt
+    
 
-    # # Intervention × Intervention heatmaps
-    # for term, df in interv_mems.items():
-    #     plt.figure(figsize=(8, 6))
-    #     plt.imshow(df.values, aspect='auto')
-    #     plt.title(f"Heatmap of '{term}' membership (intervention × intervention)")
-    #     plt.xticks(range(len(point_keys)), point_keys, rotation=90, fontsize=6)
-    #     plt.yticks(range(len(point_keys)), point_keys, fontsize=6)
-    #     plt.colorbar(label='Membership degree')
-    #     plt.tight_layout()
-    #     plt.show()
+    # # Summary of all terms
+    # print("--- Fuzzy membership summary ---")
+    # for label, mems in [("Intervention×Intervention", interv_mems), ("Intervention×Park", park_mems)]:
+    #     print(f"{label} terms:")
+    #     for term, df in mems.items():
+    #         print(f"  • {term:10s}: shape={df.shape}, values ∈ [{df.values.min():.3f}, {df.values.max():.3f}]")
 
-    # # Intervention × Park heatmaps
-    # park_keys = list(park_mems[next(iter(park_mems))].columns)
-    # for term, df in park_mems.items():
-    #     plt.figure(figsize=(8, 6))
-    #     plt.imshow(df.values, aspect='auto')
-    #     plt.title(f"Heatmap of '{term}' membership (intervention × park)")
-    #     plt.xticks(range(len(park_keys)), park_keys, rotation=90, fontsize=6)
-    #     plt.yticks(range(len(point_keys)), point_keys, fontsize=6)
-    #     plt.colorbar(label='Membership degree')
-    #     plt.tight_layout()
-    #     plt.show()
+    # # === Plot heatmaps for all fuzzy terms ===
+    # import matplotlib.pyplot as plt
 
-    # 1️⃣ basic map with everything
-    plot_france_regions_parks_interventions(pts, point_keys)
+    # # # Intervention × Intervention heatmaps
+    # # for term, df in interv_mems.items():
+    # #     plt.figure(figsize=(8, 6))
+    # #     plt.imshow(df.values, aspect='auto')
+    # #     plt.title(f"Heatmap of '{term}' membership (intervention × intervention)")
+    # #     plt.xticks(range(len(point_keys)), point_keys, rotation=90, fontsize=6)
+    # #     plt.yticks(range(len(point_keys)), point_keys, fontsize=6)
+    # #     plt.colorbar(label='Membership degree')
+    # #     plt.tight_layout()
+    # #     plt.show()
 
-    # 2️⃣ gradient map  (use any t-conorm you like)
-    from fuzzy_var import s_norm_max
-    plot_intervention_park_gradient(pts, point_keys, park_mems, s_norm_max)
+    # # # Intervention × Park heatmaps
+    # # park_keys = list(park_mems[next(iter(park_mems))].columns)
+    # # for term, df in park_mems.items():
+    # #     plt.figure(figsize=(8, 6))
+    # #     plt.imshow(df.values, aspect='auto')
+    # #     plt.title(f"Heatmap of '{term}' membership (intervention × park)")
+    # #     plt.xticks(range(len(park_keys)), park_keys, rotation=90, fontsize=6)
+    # #     plt.yticks(range(len(point_keys)), point_keys, fontsize=6)
+    # #     plt.colorbar(label='Membership degree')
+    # #     plt.tight_layout()
+    # #     plt.show()
 
-    # 3️⃣ 3-D radial fuzzy distance between interventions
-    plot_3d_fuzzy_distance_interventions(fuzzy_interv)
+    # # 1️⃣ basic map with everything
+    # plot_france_regions_parks_interventions(pts, point_keys)
 
-    # 4️⃣ 3-D radial fuzzy distance to parks
-    plot_3d_fuzzy_distance_parks(fuzzy_parks)
+    # # 2️⃣ gradient map  (use any t-conorm you like)
+    # from fuzzy_var import s_norm_max
+    # plot_intervention_park_gradient(pts, point_keys, park_mems, s_norm_max)
+
+    # # 3️⃣ 3-D radial fuzzy distance between interventions
+    # plot_3d_fuzzy_distance_interventions(fuzzy_interv)
+
+    # # 4️⃣ 3-D radial fuzzy distance to parks
+    # plot_3d_fuzzy_distance_parks(fuzzy_parks)
