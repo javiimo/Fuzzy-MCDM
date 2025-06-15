@@ -1,6 +1,7 @@
 from typing import Callable, Dict, Union
 import math
 import numpy as np
+import pandas as pd
 
 # Type alias for scalar or array input
 dtype = Union[float, np.ndarray]
