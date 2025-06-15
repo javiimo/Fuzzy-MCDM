@@ -231,6 +231,270 @@ def build_fuzzy_intervention_park_distance(
 
 
 # ---------------------------------------------------------------------------
+# #### Plots ################################################################
+# ---------------------------------------------------------------------------
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 – needed for 3-D
+import numpy as np
+import geopandas as gpd
+from shapely.geometry import Point
+
+
+def _to_points_gdf(points_xy: np.ndarray,
+                   france_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Return a GeoDataFrame (WGS-84) from already *scaled* lon/lat pairs."""
+    return gpd.GeoDataFrame(
+        geometry=gpd.points_from_xy(points_xy[:, 0], points_xy[:, 1]),
+        crs=france_gdf.crs
+    )
+
+
+# ---------------------------------------------------------------------------
+# ❶ 2-D France  |  regions + parks + interventions
+# ---------------------------------------------------------------------------
+def plot_france_regions_parks_interventions(
+    raw_points: np.ndarray,
+    point_keys: list[str],
+    *,
+    france_regions_path: str | Path = FRANCE_JSON_PATH,
+    parks_csv_path: str | Path = PARKS_CSV_PATH,
+    marker_kw=None,
+) -> None:
+    """Same as before, but uses *markersize* instead of *s*."""
+    marker_kw = marker_kw or dict(marker="o",
+                                  markersize=50,
+                                  edgecolor="k",
+                                  zorder=4)
+
+    france_gdf = _load_french_regions(france_regions_path)
+    parks_gdf  = load_national_parks(parks_csv_path)
+
+    pts_scaled_deg = _scale_points_to_france(raw_points, france_gdf)
+    pts_gdf        = _to_points_gdf(pts_scaled_deg, france_gdf)
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    france_gdf.plot(ax=ax, facecolor="white", edgecolor="black", linewidth=.5)
+    parks_gdf.plot(ax=ax, facecolor="forestgreen", alpha=.4, edgecolor="none")
+
+    pts_gdf.plot(ax=ax, **marker_kw)
+
+    for key, (x, y) in zip(point_keys, pts_scaled_deg):
+        ax.text(x, y, key, fontsize=7, ha="left", va="bottom", color="blue")
+
+    ax.set_title("French regions + natural parks + interventions")
+    ax.set_aspect("equal")
+    plt.tight_layout()
+    plt.show()
+
+
+# ---------------------------------------------------------------------------
+# ❷ 2-D France  |  gradient = fuzzy proximity (intervention → parks)
+# ---------------------------------------------------------------------------
+def _tconorm_aggregate(df: pd.DataFrame, s_norm) -> np.ndarray:
+    """
+    Aggregate every row (intervention) across *all* park columns with `s_norm`.
+
+    Returns a 1-D array of length = n_interventions.
+    Safe against duplicate column labels because it operates on `.values`.
+    """
+    if df.shape[1] == 0:
+        raise ValueError("Membership table has no columns to aggregate.")
+
+    vals = df.values                    # shape = (n_rows, n_cols)
+    agg   = vals[:, 0]                  # first column → 1-D
+    for j in range(1, vals.shape[1]):
+        agg = s_norm(agg, vals[:, j])   # still 1-D
+    return agg
+
+def plot_intervention_park_gradient(
+    raw_points: np.ndarray,
+    point_keys: list[str],
+    park_memberships: MembershipMatrices,
+    s_norm,
+    *,
+    france_regions_path: str | Path = FRANCE_JSON_PATH,
+    parks_csv_path: str | Path = PARKS_CSV_PATH,
+    cmap = plt.get_cmap("coolwarm"),          # avoid Matplotlib 3.7 deprecation
+) -> None:
+    """Colour each intervention from blue→red by fuzzy proximity to parks."""
+    france_gdf = _load_french_regions(france_regions_path)
+    parks_gdf  = load_national_parks(parks_csv_path)
+
+    pts_scaled_deg = _scale_points_to_france(raw_points, france_gdf)
+    pts_gdf        = _to_points_gdf(pts_scaled_deg, france_gdf)
+
+    df_close = park_memberships["close"]
+    μ_close  = _tconorm_aggregate(df_close, s_norm)
+
+    colours = cmap(μ_close)
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    france_gdf.plot(ax=ax, facecolor="white", edgecolor="black", linewidth=.5)
+    parks_gdf.plot(ax=ax, facecolor="forestgreen", alpha=.4, edgecolor="none")
+
+    pts_gdf.plot(ax=ax, marker="o", markersize=80,
+                 color=colours, edgecolor="k", zorder=4)
+
+    for key, (x, y) in zip(point_keys, pts_scaled_deg):
+        ax.text(x, y, key, fontsize=7, ha="left", va="bottom")
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0, 1))
+    plt.colorbar(sm, ax=ax, shrink=.7, pad=.02,
+                 label=r"aggregated $\,\mu_{\mathrm{close}}$ (0 far → 1 close)")
+
+    ax.set_title("Fuzzy proximity of interventions to parks")
+    ax.set_aspect("equal")
+    plt.tight_layout()
+    plt.show()
+
+
+# ---------------------------------------------------------------------------
+# ❸ & ❹  3-D fuzzy-distance “surfaces” (radial symmetry)
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# ---------- 3-D helpers (replace the previous ones) -------------------------
+# ---------------------------------------------------------------------------
+from shapely.geometry import Polygon, MultiPolygon
+from matplotlib import colormaps as _cm
+
+
+def _plot_poly_edges_3d(ax, geoms, *, z=0, color="black", lw=0.4):
+    """Draw every outer + inner ring of (Multi)Polygons on the plane z = const."""
+    def _draw_single(poly: Polygon):
+        xs, ys = poly.exterior.xy
+        ax.plot(xs, ys, zs=z, zdir="z", color=color, linewidth=lw)
+        for hole in poly.interiors:
+            xs, ys = hole.xy
+            ax.plot(xs, ys, zs=z, zdir="z", color=color, linewidth=lw)
+
+    for g in geoms:
+        if isinstance(g, Polygon):
+            _draw_single(g)
+        elif isinstance(g, MultiPolygon):
+            for poly in g.geoms:
+                _draw_single(poly)
+
+
+def _make_radial_surfaces(france_gdf: gpd.GeoDataFrame,
+                          fuzzy_var: FuzzyVariable,
+                          centre: Point | None = None,
+                          n: int = 300) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """
+    Return {term: (X, Y, Z)}.  Each *Z* is the membership matrix for that term,
+    so every term becomes its own surface (alpha blending will show intersections).
+    """
+    # ---- generate a lon-lat grid ------------------------------------------------
+    minx, miny, maxx, maxy = france_gdf.total_bounds
+    lon = np.linspace(minx, maxx, n)
+    lat = np.linspace(miny, maxy, n)
+    X, Y = np.meshgrid(lon, lat)
+
+    # ---- choose centre ----------------------------------------------------------
+    if centre is None:
+        try:                       # GeoPandas ≥0.14
+            union_geom = france_gdf.union_all()
+        except AttributeError:     # fall-back for older versions
+            union_geom = france_gdf.unary_union
+        centre = union_geom.centroid
+
+    # ---- Euclidean distance (projected) ----------------------------------------
+    centre_m = _project_to_meters(np.array([[centre.x, centre.y]]))[0]
+    grid_m   = _project_to_meters(np.column_stack([X.ravel(), Y.ravel()]))
+
+    dists = np.hypot(grid_m[:, 0] - centre_m[0],
+                     grid_m[:, 1] - centre_m[1]).reshape(X.shape)
+
+    # ---- evaluate fuzzy-variable & pack -----------------------------------------
+    μ = fuzzy_var(dists)                # dict(term → ndarray)
+    return {term: (X, Y, Z) for term, Z in μ.items()}
+
+
+# ---------------------------------------------------------------------------
+# ---------- 3-D plot: fuzzy distance between interventions ------------------
+# ---------------------------------------------------------------------------
+def plot_3d_fuzzy_distance_interventions(
+    fuzzy_var: FuzzyVariable,
+    *,
+    france_regions_path: str | Path = FRANCE_JSON_PATH,
+    elev: int = 55, azim: int = 45,
+    alpha: float = 0.55,
+) -> None:
+    """Multiple semi-transparent surfaces (one per term) + French regions."""
+    france_gdf = _load_french_regions(france_regions_path)
+    surfaces   = _make_radial_surfaces(france_gdf, fuzzy_var)
+
+    # colour maps to cycle through
+    cmaps = ["Reds", "Greens", "Blues", "Purples", "Oranges", "Greys"]
+
+    fig = plt.figure(figsize=(11, 9))
+    ax  = fig.add_subplot(111, projection="3d")
+
+    # plot each membership surface
+    for i, (term, (X, Y, Z)) in enumerate(surfaces.items()):
+        cmap = _cm.get_cmap(cmaps[i % len(cmaps)])
+        surf = ax.plot_surface(X, Y, Z,
+                               cmap=cmap,
+                               linewidth=0,
+                               antialiased=False,
+                               alpha=alpha)
+        # add colour-bar per surface (small, stacked)
+        m = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0, 1))
+        cbar = plt.colorbar(m, ax=ax, fraction=.02, pad=.02)
+        cbar.set_label(term, rotation=90)
+
+    # political outline on ground plane
+    _plot_poly_edges_3d(ax, france_gdf.geometry, z=0, color="black")
+
+    ax.set_title("Fuzzy radial distance between interventions (one surface per term)")
+    ax.view_init(elev=elev, azim=azim)
+    plt.tight_layout()
+    plt.show()
+
+
+# ---------------------------------------------------------------------------
+# ---------- 3-D plot: fuzzy distance to parks -------------------------------
+# ---------------------------------------------------------------------------
+def plot_3d_fuzzy_distance_parks(
+    fuzzy_var: FuzzyVariable,
+    *,
+    france_regions_path: str | Path = FRANCE_JSON_PATH,
+    parks_csv_path: str | Path = PARKS_CSV_PATH,
+    elev: int = 55, azim: int = 45,
+    alpha: float = 0.55,
+) -> None:
+    """Multiple semi-transparent surfaces (one per term) + French national parks."""
+    france_gdf = _load_french_regions(france_regions_path)
+    parks_gdf  = load_national_parks(parks_csv_path)
+    surfaces   = _make_radial_surfaces(france_gdf, fuzzy_var)
+
+    cmaps = ["Reds", "Greens", "Blues", "Purples", "Oranges", "Greys"]
+
+    fig = plt.figure(figsize=(11, 9))
+    ax  = fig.add_subplot(111, projection="3d")
+
+    for i, (term, (X, Y, Z)) in enumerate(surfaces.items()):
+        cmap = _cm.get_cmap(cmaps[i % len(cmaps)])
+        surf = ax.plot_surface(X, Y, Z,
+                               cmap=cmap,
+                               linewidth=0,
+                               antialiased=False,
+                               alpha=alpha)
+        m = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0, 1))
+        cbar = plt.colorbar(m, ax=ax, fraction=.02, pad=.02)
+        cbar.set_label(term, rotation=90)
+
+    # park borders (no call to .plot(), we draw manually)
+    _plot_poly_edges_3d(ax, parks_gdf.geometry, z=0, color="forestgreen")
+
+    ax.set_title("Fuzzy radial distance to national parks (one surface per term)")
+    ax.view_init(elev=elev, azim=azim)
+    plt.tight_layout()
+    plt.show()
+
+
+
+# ---------------------------------------------------------------------------
 # Testing
 # ---------------------------------------------------------------------------
 
@@ -271,25 +535,38 @@ if __name__ == "__main__":
     # === Plot heatmaps for all fuzzy terms ===
     import matplotlib.pyplot as plt
 
-    # Intervention × Intervention heatmaps
-    for term, df in interv_mems.items():
-        plt.figure(figsize=(8, 6))
-        plt.imshow(df.values, aspect='auto')
-        plt.title(f"Heatmap of '{term}' membership (intervention × intervention)")
-        plt.xticks(range(len(point_keys)), point_keys, rotation=90, fontsize=6)
-        plt.yticks(range(len(point_keys)), point_keys, fontsize=6)
-        plt.colorbar(label='Membership degree')
-        plt.tight_layout()
-        plt.show()
+    # # Intervention × Intervention heatmaps
+    # for term, df in interv_mems.items():
+    #     plt.figure(figsize=(8, 6))
+    #     plt.imshow(df.values, aspect='auto')
+    #     plt.title(f"Heatmap of '{term}' membership (intervention × intervention)")
+    #     plt.xticks(range(len(point_keys)), point_keys, rotation=90, fontsize=6)
+    #     plt.yticks(range(len(point_keys)), point_keys, fontsize=6)
+    #     plt.colorbar(label='Membership degree')
+    #     plt.tight_layout()
+    #     plt.show()
 
-    # Intervention × Park heatmaps
-    park_keys = list(park_mems[next(iter(park_mems))].columns)
-    for term, df in park_mems.items():
-        plt.figure(figsize=(8, 6))
-        plt.imshow(df.values, aspect='auto')
-        plt.title(f"Heatmap of '{term}' membership (intervention × park)")
-        plt.xticks(range(len(park_keys)), park_keys, rotation=90, fontsize=6)
-        plt.yticks(range(len(point_keys)), point_keys, fontsize=6)
-        plt.colorbar(label='Membership degree')
-        plt.tight_layout()
-        plt.show()
+    # # Intervention × Park heatmaps
+    # park_keys = list(park_mems[next(iter(park_mems))].columns)
+    # for term, df in park_mems.items():
+    #     plt.figure(figsize=(8, 6))
+    #     plt.imshow(df.values, aspect='auto')
+    #     plt.title(f"Heatmap of '{term}' membership (intervention × park)")
+    #     plt.xticks(range(len(park_keys)), park_keys, rotation=90, fontsize=6)
+    #     plt.yticks(range(len(point_keys)), point_keys, fontsize=6)
+    #     plt.colorbar(label='Membership degree')
+    #     plt.tight_layout()
+    #     plt.show()
+
+    # 1️⃣ basic map with everything
+    plot_france_regions_parks_interventions(pts, point_keys)
+
+    # 2️⃣ gradient map  (use any t-conorm you like)
+    from fuzzy_var import s_norm_max
+    plot_intervention_park_gradient(pts, point_keys, park_mems, s_norm_max)
+
+    # 3️⃣ 3-D radial fuzzy distance between interventions
+    plot_3d_fuzzy_distance_interventions(fuzzy_interv)
+
+    # 4️⃣ 3-D radial fuzzy distance to parks
+    plot_3d_fuzzy_distance_parks(fuzzy_parks)
