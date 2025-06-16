@@ -226,6 +226,10 @@ def main():
         return
 
     print(f"\nSaving DM Matrix to a CSV file...\n")
+    row_names = [f"T{sol['team']}_D{sol['time']}_S{sol['seed']}"
+             for sol in solution_keys] # Use a more informative name for each solution.
+    DM_matrix.index = row_names  
+    DM_matrix.index.name = "Alternative"
     DM_matrix.to_csv('decision_matrix_expanded.csv')
     
     print(f"\nSaving DM Matrix to a markdown file...\n")
