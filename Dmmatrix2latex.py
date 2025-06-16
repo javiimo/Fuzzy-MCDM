@@ -136,8 +136,9 @@ sub_header = (
 )
 
 table_start = r"""
+\clearpage
 \newgeometry{bottom=0.6cm}
-\begin{sidewaystable}[htbp]
+\begin{sidewaystable}[!ht]
 \thispagestyle{empty}
 \centering
 \scriptsize
