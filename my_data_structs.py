@@ -971,7 +971,7 @@ class Solution:
              print("Please run `compute_seansonality()` first.")
              return
 
-        fig, axes = plt.subplots(2, 2, figsize=(18, 12), sharex=True)
+        fig, axes = plt.subplots(2, 2, figsize=(19, 14), sharex=True)
         fig.suptitle("Daily Concurrency Mass by Fuzzy Category", fontsize=16)
         T = len(self.concurrent_interventions)
         timesteps = np.arange(1, T + 1)
@@ -987,15 +987,18 @@ class Solution:
             y_lim = ax.get_ylim()
             for season, start, end in season_intervals:
                 ax.axvspan(start - 0.5, end + 0.5, facecolor=color_map_seasons.get(season, 'gray'), alpha=0.3, zorder=0)
-                ax.text((start + end) / 2, y_lim[1] * 0.95, season, ha='center', va='top', fontsize=9)
-            ax.set_ylim(y_lim) # Reset ylim after adding text
+                ax.text((start + end) / 2, y_lim[1] *1.05, season, ha='center', va='top', fontsize=9)
+            ax.set_ylim(y_lim[0], y_lim[1] * 1.1) # Reset ylim after adding text with extra space
 
-        def plot_stacked_bar(ax, mass_data, title):
+        def plot_stacked_bar(ax, mass_data, title, log = False):
             bottom = np.zeros(T)
             for label, mass_vector in mass_data.items():
                 ax.bar(timesteps, mass_vector, bottom=bottom, label=label, zorder=2)
                 bottom += mass_vector
             ax.set_ylabel("Total Membership (Mass)")
+            ax.set_xlabel("Timestep")
+            if log: 
+                ax.set_yscale('log')
             ax.set_title(title)
             ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
             ax.grid(axis='y', linestyle='--', alpha=0.7)
@@ -1003,11 +1006,10 @@ class Solution:
 
         plot_stacked_bar(axes[0, 0], self._size_daily_mass, "Size Concurrency Mass")
         plot_stacked_bar(axes[0, 1], self._risk_daily_mass, "Risk Concurrency Mass")
-        plot_stacked_bar(axes[1, 0], self._closeness_daily_mass, "Closeness Concurrency Mass")
+        plot_stacked_bar(axes[1, 0], self._closeness_daily_mass, "Closeness Concurrency Mass", log=True)
         plot_stacked_bar(axes[1, 1], self._env_impact_daily_mass, "Environmental Impact Concurrency Mass")
 
-        axes[1, 0].set_xlabel("Timestep"); axes[1, 1].set_xlabel("Timestep")
-        plt.tight_layout(rect=[0, 0, 0.9, 0.96])
+        plt.tight_layout(rect=[0, 0, 0.9, 0.96], h_pad=3.0)
         plt.show()
 
 

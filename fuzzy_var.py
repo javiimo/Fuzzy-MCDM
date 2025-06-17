@@ -2,6 +2,7 @@ from typing import Callable, Dict, Union
 import math
 import numpy as np
 import pandas as pd
+from typing import Optional, Any   
 
 # Type alias for scalar or array input
 dtype = Union[float, np.ndarray]
@@ -124,6 +125,54 @@ class FuzzyVariable:
     def add_trapezoidal(self, name: str, a: float, b: float, c: float, d: float):
         """Add a trapezoidal term."""
         self._terms[name] = trapezoidal_mf(a, b, c, d)
+    
+
+    def plot(
+        self,
+        xmin: float,
+        xmax: float,
+        *,
+        num: int = 1_000,
+        ax=None,
+        title: Optional[str] = None,
+        **line_kwargs: Any,
+    ):
+        """
+        Visualise every term on the interval [xmin, xmax].
+
+        Parameters
+        ----------
+        xmin, xmax : float
+            Universe of discourse to draw.
+        num : int, default 1000
+            Points evaluated per curve.
+        ax : matplotlib.axes.Axes, optional
+            Re-use an existing axes; create a new figure if omitted.
+        title : str, optional
+            Plot title.  If None, no title is added.
+        **line_kwargs :
+            Extra keyword arguments forwarded to ``Axes.plot``  
+            (e.g. linewidth=2, linestyle="--", alpha=0.8).
+        """
+        if ax is None:
+            _, ax = plt.subplots()
+
+        x = np.linspace(xmin, xmax, num)
+        for name, mf in self._terms.items():
+            y = mf(x)
+            ax.plot(x, y, label=name, **line_kwargs)
+
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_xlabel("x", fontsize=18)
+        ax.set_ylabel("membership μ", fontsize=18)
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend(loc="right", fontsize=18)
+        ax.tick_params(axis='y', labelsize=18)
+        if title:
+            ax.set_title(title, fontsize=20)
+
+        return ax            # so callers can further customise the axes
 
     def __call__(
         self, x: Union[float, np.ndarray]
@@ -149,3 +198,13 @@ def fuzz_dist(a: float, b: float, c: float, d: float, e: float) -> FuzzyVariable
     fv.add_triangular("mid-far",   c,   d,   e)
     fv.add_trapezoidal("far",      d,   e,   math.inf, math.inf)
     return fv
+
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    fuzzy_interv = fuzz_dist(2, 3, 4, 8, 11)
+    ax = fuzzy_interv.plot(0, 15, title="Fuzzy Distance")
+    ax.set_xticks([2, 3, 4, 8, 11])
+    ax.set_xticklabels(['a', 'b', 'c', 'd', 'e'], fontsize=18)
+    plt.show()
+

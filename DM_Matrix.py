@@ -113,7 +113,8 @@ def build_DM_matrix(instance_path, solutions_paths, points="points.npy", point_k
         sol.compute_risk_concurrency(instance)
         sol.compute_size_concurrency(instance)
         sol.dist_matrix_to_closeness_concurrency(interv_mems)
-        sol.compute_environmental_impact_concurrency(park_mems, tconorm=np.maximum)
+        from fuzzy_var import s_norm_prob
+        sol.compute_environmental_impact_concurrency(park_mems, tconorm=s_norm_prob)
 
         if plots:
             sol.plot_all_concurrency_details()
