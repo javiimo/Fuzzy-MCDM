@@ -70,7 +70,7 @@ def _scale_points_to_france(points: np.ndarray, france_gdf: gpd.GeoDataFrame) ->
     scale_y = (tgt_maxy - tgt_miny) / (src_maxy - src_miny)
 
     x_scaled = tgt_minx + (x_raw - src_minx) * scale_x / 2 + 4  # empirical offsets as before
-    y_scaled = tgt_miny + (y_raw - src_miny) * scale_y / 2 + 2.5
+    y_scaled = tgt_miny + (y_raw - src_miny) * scale_y / 2 + 2.6
 
     return np.column_stack([x_scaled, y_scaled])
 
@@ -550,12 +550,12 @@ if __name__ == "__main__":
     # #     plt.tight_layout()
     # #     plt.show()
 
-    # # 1️⃣ basic map with everything
-    # plot_france_regions_parks_interventions(pts, point_keys)
+    # 1️⃣ basic map with everything
+    plot_france_regions_parks_interventions(pts, point_keys)
 
-    # # 2️⃣ gradient map  (use any t-conorm you like)
-    # from fuzzy_var import s_norm_max
-    # plot_intervention_park_gradient(pts, point_keys, park_mems, s_norm_max)
+    # 2️⃣ gradient map  (use any t-conorm you like)
+    from fuzzy_var import s_norm_max
+    plot_intervention_park_gradient(pts, point_keys, park_mems, s_norm_max)
 
     # # 3️⃣ 3-D radial fuzzy distance between interventions
     # plot_3d_fuzzy_distance_interventions(fuzzy_interv)
