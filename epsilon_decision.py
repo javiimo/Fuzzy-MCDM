@@ -85,12 +85,10 @@ def epsilon_lexico_block(
 DEFAULT_CONFIG: Dict = {
     # priority lists -------------------------------------------------
     "size_cols": [
-        "Size_small", "Size_mid_small", "Size_medium",
-        "Size_mid_large", "Size_large",
+        "Size_large", "Size_mid_large",  "Size_medium", "Size_mid_small", "Size_small"
     ],
     "risk_cols": [
-        "Risk_low", "Risk_mid_low", "Risk_mid",
-        "Risk_mid_high", "Risk_high",
+        "Risk_high", "Risk_mid_high","Risk_mid", "Risk_mid_low", "Risk_low" 
     ],
     "env_cols": [
         "EnvImpact_close", "EnvImpact_mid_close", "EnvImpact_mid",
