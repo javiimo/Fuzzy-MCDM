@@ -309,71 +309,61 @@ def sweep_orness_winners(
 
     return (winners, mapping if return_mapping else None)
 
-# ================================================================
-# PLOT  A — 4-pane “winner-region” diagram under four seasonality
-#           preference scenarios (winter, summer, inter-season,
-#           equal weights)
-# ================================================================
-# -------------------------------------------------------------------
-# Adapter so both old & new helper code compile together
-# -------------------------------------------------------------------
-def agg_with_alpha(csv_path, outer_orness, cfg=None):
-    """
-    Wrapper around the original aggregate_matrix(csv_path, cfg) that
-    EXPECTS outer_orness to sit inside cfg.
-    """
-    cfg = {**(cfg or {}), "outer_orness": outer_orness}
-    return aggregate_matrix(csv_path, cfg)
-
-from typing import Sequence, Dict, Iterable, Set
+# =======================================================================
+#  PLOT A — winner-region (4 panels)  with *arbitrary-zoom* insets
+#           • every alternative that ever wins in a panel is drawn
+#           • inset shows an interpolated curve segment centred at the
+#             winner-switch α, so the crossing point is visible even
+#             between sampled α-grid points
+#           • inset has scale bars:  Δα  (horizontal) and  Δscore (vertical)
+# =======================================================================
+from typing import Sequence, Dict, Iterable
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+# small helper ------------------------------------------------------------
+def _agg_with_alpha(csv_path: str | Path, alpha: float, cfg: dict | None):
+    return aggregate_matrix(csv_path, {**(cfg or {}), "outer_orness": alpha})
+
 
 def plot_winner_regions_four(
     csv_path: str | Path,
-    winner_pool: Set[str],
     outer_orness_grid: int | Iterable[float] = 101,
+    *,
     base_cfg: Dict | None = None,
     season_scenarios: Dict[str, Sequence[float]] | None = None,
     colours: Dict[str, str] | None = None,
+    # zoom controls -------------------------------------------------------
+    zoom_width: float = 0.02,     # width of the inset window in α-units
+    zoom_fine: int = 300,         # number of interpolated points inside inset
+    inset_size: float = 1.2,      # inches
 ) -> None:
     """
-    Produce a 2×2 figure (Matplotlib) – one panel per seasonality weight
-    scenario – where each panel shows *coloured regions* indicating which
-    alternative(s) in `winner_pool` dominate as the outer OWA orness alpha sweeps
-    from 0 to 1.
-
+    Four panels (winter / summer / inter-season / equal).  For each panel the
+    function:
+        1.  finds *all* alternatives that are winners for any α in [0,1],
+        2.  colours the background by the current winner,
+        3.  plots every winner's score curve,
+        4.  adds a magnifier inset at each α where the winner set changes.
     Parameters
     ----------
-    csv_path : str | Path
-        Path to the fully-normalised decision matrix.
-    winner_pool : set[str]
-        The alternatives you want to track (usually the overall winners you
-        found in the coarse sweep).
-    outer_orness_grid : int | iterable, optional
-        • If **int** → number of equally-spaced alpha values in [0,1].  
-        • If **iterable** → direct list/array of alpha’s.
-    base_cfg : dict, optional
-        Configuration baseline; copied and slightly modified inside each panel.
-    season_scenarios : dict[label → 3-tuple], optional
-        Custom seasonality weightings.  Default =  
-        {
-            "Winter focus": (1, 0, 0),
-            "Summer focus": (0, 1, 0),
-            "Inter-season": (0, 0, 1),
-            "Equal":        (1/3, 1/3, 1/3),
-        }
-    colours : dict[alt → colour], optional
-        Colour to use for each alternative when shading its winning span.
+    zoom_width : float
+        Horizontal width of the magnifier window (Δα).  Make it smaller for
+        stronger magnification.
+    zoom_fine : int
+        How many interpolated points to draw inside each inset.
+    inset_size : float
+        Side length of the square inset window in inches.
     """
-    # ---------- grid of alpha values ----------
+    # ------------- α-grid -------------------------------------------------
     if isinstance(outer_orness_grid, int):
         alphas = np.linspace(0.0, 1.0, outer_orness_grid)
     else:
         alphas = np.asarray(list(outer_orness_grid), float)
 
-    # ---------- seasonality scenarios ----------
+    # ------------- seasonality scenarios ---------------------------------
     season_scenarios = season_scenarios or {
         "Winter focus": (1.0, 0.0, 0.0),
         "Summer focus": (0.0, 1.0, 0.0),
@@ -381,74 +371,133 @@ def plot_winner_regions_four(
         "Equal":        (1/3, 1/3, 1/3),
     }
 
-    # colours for each alt
+    # ---------- colour palette (infinite cycle) ----------------------
     import itertools
-    base_palette = plt.cm.get_cmap("tab20")
-    col_cycle = itertools.cycle(base_palette.colors)
+    base_cycle = ["tab:green", "tab:orange", "tab:blue", "tab:red",
+                "tab:purple", "tab:brown", "tab:pink", "tab:olive",
+                "tab:cyan", "tab:gray"]
+    colour_cycle = itertools.cycle(base_cycle)      #  ← will never exhaust
     colours = dict(colours) if colours else {}
-    for alt in winner_pool:
-        colours.setdefault(alt, next(col_cycle))
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True, sharey=True)
+    # ------------- figure -------------------------------------------------
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10), sharex=True, sharey=True)
     axes = axes.flatten()
 
     for ax, (label, weights) in zip(axes, season_scenarios.items()):
-        cfg = {**(base_cfg or {})}
-        cfg["seasonality_method"] = "weighted_avg"
-        cfg["seasonality_weights"] = weights
 
-        # score table for tracked alts
-        score_tbl = {alt: [] for alt in winner_pool}
-        winner_per_alpha = []
+        # --- configuration for this panel --------------------------------
+        cfg_p = {**(base_cfg or {}),
+                 "seasonality_method": "weighted_avg",
+                 "seasonality_weights": weights}
 
+        # --- discover winner set & background spans ----------------------
+        winner_per_alpha, alt_set = [], set()
         for alpha in alphas:
-            cfg["outer_orness"] = float(alpha)
-            scores = agg_with_alpha(csv_path, alpha, cfg)
+            scores = _agg_with_alpha(csv_path, alpha, cfg_p)
+            best_val = scores["Global"].max()
+            winners  = scores.index[scores["Global"] >= best_val - 1e-12].tolist()
+            winner_per_alpha.append(winners)
+            alt_set.update(winners)
 
-            # store tracked scores
-            for alt in winner_pool:
+        # assign colours
+        for alt in sorted(alt_set):
+            colours.setdefault(alt, next(colour_cycle))
+
+
+        # background colouring
+        cur = winner_per_alpha[0]
+        span_start = alphas[0]
+        for i in range(1, len(alphas)):
+            if set(winner_per_alpha[i]) != set(cur):
+                ax.axvspan(span_start, alphas[i],
+                           color=colours[cur[0]], alpha=0.25)
+                span_start, cur = alphas[i], winner_per_alpha[i]
+        ax.axvspan(span_start, alphas[-1],
+                   color=colours[cur[0]], alpha=0.25)
+
+        # --- gather full score vectors for winners -----------------------
+        score_tbl = {alt: [] for alt in alt_set}
+        for alpha in alphas:
+            scores = _agg_with_alpha(csv_path, alpha, cfg_p)
+            for alt in alt_set:
                 score_tbl[alt].append(scores.loc[alt, "Global"])
 
-            best_val = scores["Global"].max()
-            winners = scores.index[
-                scores["Global"] >= best_val - 1e-12
-            ].tolist()
-            winner_per_alpha.append(winners)
+        # plot main curves
+        for alt in sorted(alt_set):
+            ax.plot(alphas, score_tbl[alt],
+                    lw=1.6, color=colours[alt], label=alt)
 
-        # background coloured spans
-        current = winner_per_alpha[0]
-        span_start = alphas[0]
-        for idx in range(1, len(alphas)):
-            if set(winner_per_alpha[idx]) != set(current):
-                alt_key = list(current)[0]
-                if alt_key not in colours:
-                    colours[alt_key] = next(col_cycle)
-                ax.axvspan(
-                    span_start, alphas[idx],
-                    color=colours[alt_key], alpha=0.25
-                )
-                span_start = alphas[idx]
-                current = winner_per_alpha[idx]
-        # last span
-        ax.axvspan(
-            span_start, alphas[-1],
-            color=colours[list(current)[0]], alpha=0.25
-        )
+        # --- magnifier insets at change points ---------------------------
+        change_idx = [i for i in range(1, len(alphas))
+                      if set(winner_per_alpha[i]) != set(winner_per_alpha[i-1])]
 
-        # overlay score curves (no markers)
-        for alt, y in score_tbl.items():
-            ax.plot(alphas, y, linewidth=1.5, color=colours[alt], label=alt)
+        for idx in change_idx:
+            x_c = alphas[idx]
+            a_min = max(0.0, x_c - zoom_width/2)
+            a_max = min(1.0, x_c + zoom_width/2)
+            fine_alpha = np.linspace(a_min, a_max, zoom_fine)
 
+            axins = inset_axes(ax, width=inset_size, height=inset_size,
+                               bbox_to_anchor=(x_c, np.mean([score_tbl[w][idx] for w in alt_set])),
+                               bbox_transform=ax.transData, loc='center')
+            axins.set_aspect('auto')
+
+            # interpolated curves
+            for alt in sorted(alt_set):
+                interp_y = np.interp(fine_alpha, alphas, score_tbl[alt])
+                axins.plot(fine_alpha, interp_y,
+                           color=colours[alt], lw=1.2)
+
+            axins.set_xticks([]); axins.set_yticks([])
+            y_slice = [np.interp(fa, alphas, score_tbl[alt]).item()
+                       for alt in alt_set for fa in fine_alpha]
+            y_min, y_max = min(y_slice), max(y_slice)
+            pad = (y_max - y_min)*0.1 or 0.02
+            axins.set_xlim(a_min, a_max)
+            axins.set_ylim(y_min - pad, y_max + pad)
+
+            # --- scale bars -------------------------------------------
+            # horizontal Δα
+            scale_a = zoom_width * 0.4           # 40 % of window width
+            axins.plot([a_min + 0.05*zoom_width,
+                        a_min + 0.05*zoom_width + scale_a],
+                       [y_min + pad*0.6]*2, 'k-', lw=1)
+            axins.text(a_min + 0.05*zoom_width + scale_a/2,
+                       y_min + pad*0.8,
+                       f"Δα = {scale_a:.3f}",
+                       ha='center', va='bottom', fontsize=6)
+
+            # vertical Δscore
+            scale_s = (y_max - y_min) * 0.4
+            axins.plot([a_max - 0.1*zoom_width]*2,
+                       [y_min + pad*0.6,
+                        y_min + pad*0.6 + scale_s], 'k-', lw=1)
+            axins.text(a_max - 0.12*zoom_width,
+                       y_min + pad*0.6 + scale_s/2,
+                       f"Δs = {scale_s:.2f}", rotation=90,
+                       ha='right', va='center', fontsize=6)
+
+            for s in axins.spines.values():
+                s.set_edgecolor('k'); s.set_linewidth(0.8)
+
+        # cosmetics
         ax.set_title(label, fontsize=11)
-        ax.grid(True, linestyle=":")
         ax.set_xlabel("Orness")
         ax.set_ylabel("Aggregation score")
+        ax.grid(True, linestyle=":")
 
-    # One global legend
-    custom_lines = [plt.Line2D([0], [0], color=colours[a], lw=3) for a in winner_pool]
-    fig.legend(custom_lines, winner_pool, ncol=len(winner_pool), loc="upper center", bbox_to_anchor=(0.5, 0.96))
-    fig.suptitle("Winning solutions as orness varies (four seasonality preferences)")
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    # legend
+    handles = [plt.Line2D([0], [0], color=colours[a], lw=3) for a in colours]
+    fig.legend(handles, list(colours.keys()),
+               ncol=min(5, len(colours)), loc="upper center",
+               bbox_to_anchor=(0.5, 0.97))
+    fig.suptitle("Winning solutions as orness varies (four seasonality preferences)",
+                 fontsize=13, y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+
+
+
 
 
 # ================================================================
@@ -738,7 +787,7 @@ if __name__ == "__main__":
     # ------------------------------------------------------------
     # 2)  Four-panel diagram of winner regions over (α, alternative)
     # ------------------------------------------------------------
-    plot_winner_regions_four(csv_path, winners, outer_orness_grid=101)
+    plot_winner_regions_four(csv_path, zoom_width=0.001)
     plt.show()
 
     # ------------------------------------------------------------
