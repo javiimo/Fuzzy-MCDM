@@ -114,7 +114,7 @@ def build_DM_matrix(instance_path, solutions_paths, points="points.npy", point_k
         sol.compute_size_concurrency(instance)
         sol.dist_matrix_to_closeness_concurrency(interv_mems)
         from fuzzy_var import s_norm_prob
-        sol.compute_environmental_impact_concurrency(park_mems, tconorm=s_norm_prob)
+        sol.compute_environmental_impact_concurrency(park_mems, tconorm=np.maximum)
 
         if plots:
             sol.plot_all_concurrency_details()
@@ -135,10 +135,15 @@ def build_DM_matrix(instance_path, solutions_paths, points="points.npy", point_k
 
     for i, sol in enumerate(solutions):
         alt_id = f"A{i+1}"
+        total_interventions = len(sol.intervention_starts)          # how many interventions in this solution?
         row_data = {
             "Alternative": alt_id,
-            "Highest Concurrency": getattr(sol, "highest_concurrency", None),
+            "Highest Concurrency": (
+                sol.highest_concurrency / total_interventions      # normalised value
+                if total_interventions else np.nan                 # avoid ZeroDivision
+            ),
         }
+
         
         # Expand all concurrency scores from dictionaries into separate columns
         _add_scores(row_data, getattr(sol, "size_concurrency", {}), "Size")
