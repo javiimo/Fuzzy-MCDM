@@ -440,84 +440,143 @@ def plot_winner_regions_four(
 
 
 # ================================================================
-# PLOT  B  (fixed) — concept-level bar chart + tie stars
+# PLOT  B (enhanced) — prettier grouped-bar chart with tie stars
 # ================================================================
-def plot_concept_profiles(
+def plot_concept_profiles_pretty(
     csv_path: str | Path,
     alternatives: Sequence[str],
     cfg: Dict | None = None,
     outer_orness: float = 0.5,
     tie_tol: float = 1e-6,
+    normalise: bool = True,
 ) -> None:
     """
-    Bar-plot the 6 concept scores of the given alternatives and append
-    a ★ star on top of a bar if the LOOWA aggregation for that block
-    had to look past the first criterion (i.e. a tie occurred).
+    Horizontal grouped-bar chart of the six concept scores for *alternatives*.
 
-    All fixes: uses aggregate_matrix(csv_path, cfg)   ← only two args.
+    Improvements vs. the basic version
+    ----------------------------------
+    • horizontal orientation → labels never overlap  
+    • best-in-concept bars outlined darker for instant “winner” cue  
+    • exact values printed at bar tips (two decimals)  
+    • faint grid makes relative heights legible  
+    • ★ still marks that LOOWA had to look past the 1st column (tie)  
+
+    Parameters
+    ----------
+    csv_path       : path to the normalised decision matrix
+    alternatives   : list / tuple of alternative IDs to plot
+    cfg            : optional config overriding DEFAULT_CONFIG
+    outer_orness   : α used when computing concept scores
+    tie_tol        : tolerance for “values equal” inside a block
+    normalise      : if True (default) each concept is scaled 0-1 across
+                     *all* plotted alts so contrasts pop out visually
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
     import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
     from collections import defaultdict
 
-    # ---------- build a local cfg with the requested orness ----------
+    # ---- 1.  Assemble concept-level table via aggregate_matrix ----
     cfg_local = {**DEFAULT_CONFIG, **(cfg or {})}
     cfg_local["outer_orness"] = outer_orness
-
-    # ---------- get concept scores ----------
-    scores = aggregate_matrix(csv_path, cfg_local)
     concept_cols = ["Concurrency", "Size", "Risk",
                     "EnvImpact", "Closeness", "Seasonality"]
-    subset = scores.loc[list(alternatives), concept_cols]
 
-    # ---------- detect ties per block ----------
-    df = pd.read_csv(csv_path).set_index("Alternative")
+    scores = aggregate_matrix(csv_path, cfg_local)
+    tbl = scores.loc[list(alternatives), concept_cols]
+
+    # ---- 2.  Detect per-block ties (first two columns equal?) ----
+    raw = pd.read_csv(csv_path).set_index("Alternative")
 
     def tie_needed(row, cols):
         return len(cols) >= 2 and abs(row[cols[0]] - row[cols[1]]) <= tie_tol
 
-    tie = defaultdict(lambda: {c: False for c in concept_cols})
+    tie_flag = defaultdict(lambda: {c: False for c in concept_cols})
     for alt in alternatives:
-        row = df.loc[alt]
-        tie[alt]["Size"]       = tie_needed(row, cfg_local["size_cols"])
-        tie[alt]["Risk"]       = tie_needed(row, cfg_local["risk_cols"])
-        tie[alt]["EnvImpact"]  = tie_needed(row, cfg_local["env_cols"])
-        tie[alt]["Closeness"]  = tie_needed(row, cfg_local["closeness_cols"])
-        # Concurrency & Seasonality are single-criterion → remain False
+        r = raw.loc[alt]
+        tie_flag[alt]["Size"]       = tie_needed(r, cfg_local["size_cols"])
+        tie_flag[alt]["Risk"]       = tie_needed(r, cfg_local["risk_cols"])
+        tie_flag[alt]["EnvImpact"]  = tie_needed(r, cfg_local["env_cols"])
+        tie_flag[alt]["Closeness"]  = tie_needed(r, cfg_local["closeness_cols"])
 
-    # ---------- normalise for display ----------
-    norm = (subset - subset.min()) / (subset.max() - subset.min() + 1e-9)
+    # ---- 3.  Optional 0-1 normalisation per concept ----
+    if normalise:
+        tbl = (tbl - tbl.min()) / (tbl.max() - tbl.min() + 1e-12)
 
-    # ---------- plotting ----------
-    n_alt = len(alternatives)
-    x = np.arange(len(concept_cols))
-    bar_w = 0.8 / n_alt
+    # ---- 4.  Build the plot ----
+    n_alt   = len(alternatives)
+    n_conc  = len(concept_cols)
+    bar_h   = 0.8 / n_alt                 # bar height inside each group
+    y_ticks = np.arange(n_conc)
+
     palette = plt.cm.get_cmap("Set2", n_alt)
+    fig, ax = plt.subplots(figsize=(10, 5 + 0.3 * n_alt))
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    for idx, alt in enumerate(alternatives):
-        ax.bar(
-            x + idx*bar_w,
-            norm.loc[alt],
-            width=bar_w,
-            color=palette(idx),
+    for k, alt in enumerate(alternatives):
+        offsets = y_ticks + k * bar_h - 0.4 + bar_h / 2
+        vals    = tbl.loc[alt]
+
+        # draw bars
+        bars = ax.barh(
+            offsets, vals,
+            height=bar_h,
+            color=palette(k),
+            edgecolor="black",
             label=alt,
+            linewidth=0.7,
+            alpha=0.9,
         )
-        # mark ties
-        for i, concept in enumerate(concept_cols):
-            if tie[alt][concept]:
-                xpos = x[i] + idx*bar_w
-                ypos = norm.loc[alt, concept] + 0.02
-                ax.text(xpos, ypos, "★", ha="center", va="bottom", fontsize=10)
 
-    ax.set_xticks(x + bar_w*(n_alt-1)/2)
-    ax.set_xticklabels(concept_cols, rotation=25, ha="right")
-    ax.set_ylabel("relative concept score (0–1 normalised)")
-    ax.set_title("Concept strengths – ★ indicates LOOWA tie within block")
+        # annotate value + tie star
+        for j, bar in enumerate(bars):
+            concept = concept_cols[j]
+            # numeric label
+            ax.text(
+                bar.get_width() + 0.01,
+                bar.get_y() + bar_h / 2,
+                f"{vals[j]:.2f}",
+                va="center",
+                ha="left",
+                fontsize=9,
+            )
+            # tie star
+            if tie_flag[alt][concept]:
+                ax.text(
+                    bar.get_width() + 0.07,
+                    bar.get_y() + bar_h / 2,
+                    "★",
+                    va="center",
+                    ha="left",
+                    fontsize=10,
+                    color="firebrick",
+                )
+
+    # ---- 5.  Highlight the best bar in each concept ----
+    best_per_concept = tbl.idxmax()
+    for j, conc in enumerate(concept_cols):
+        best_alt = best_per_concept[conc]
+        k        = alternatives.index(best_alt)
+        offset   = y_ticks[j] + k * bar_h - 0.4 + bar_h / 2
+        ax.barh(
+            offset, tbl.loc[best_alt, conc],
+            height=bar_h,
+            edgecolor="black",
+            linewidth=2.0,
+            fill=False,
+        )
+
+    # ---- 6.  Cosmetics ----
+    ax.set_yticks(y_ticks)
+    ax.set_yticklabels(concept_cols)
+    ax.set_xlim(0, 1.05 if normalise else tbl.max().max() * 1.05)
+    ax.invert_yaxis()                             # top concept on top
+    ax.grid(axis="x", linestyle=":", alpha=0.4)
+    ax.set_xlabel("concept score" +
+                  (" (normalised 0-1)" if normalise else ""))
+    ax.set_title("Concept strengths – ★ indicates LOOWA tie in block")
     ax.legend()
-    ax.grid(axis="y", linestyle=":")
     plt.tight_layout()
+
 
 
 # ================================================================
@@ -669,11 +728,11 @@ if __name__ == "__main__":
     winners = {"T1_D700_S33", "T3_D700_S73", "T3_D700_S33"}
 
     # 1.  Four-panel winner-region diagram
-    plot_winner_regions_four(csv, winners, outer_orness_grid=101)
+    # plot_winner_regions_four(csv, winners, outer_orness_grid=101)
 
-    plt.show()
+    # plt.show()
     # 2.  Concept bar chart with tie indicators
-    plot_concept_profiles(csv, sorted(winners), outer_orness=0.5)
+    plot_concept_profiles_pretty(csv, sorted(winners), outer_orness=0.5)
     
     plt.show()
     plot_lexico_ties(csv, list(winners))
