@@ -102,7 +102,7 @@ DEFAULT_CONFIG: Dict = {
     # Seasonality ----------------------------------------------------
     "seasonality_cols": ["winter-like", "summer-like", "is-like"],
     "seasonality_method": "weighted_avg",        # or "owa"
-    "seasonality_weights": [0.4, 0.4, 0.2],
+    "seasonality_weights": [0.3, 0.3, 0.3],
     "seasonality_orness": 0.5,
 
     # Outer aggregation ---------------------------------------------
