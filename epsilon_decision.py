@@ -1,77 +1,89 @@
-# ================= LOOWA decision analysis script ==================
+# ================= decision_analysis.py  (epsilon-lexico edition) ==============
 #
 # Implements:
-#   • LOOWA inside four lexicographic concept blocks
-#   • (W)OWA across concepts
-#   • optional weighted-average or OWA for Seasonality
-#   • sensitivity analysis over outer-level orness
-#   • monotonicity sanity check
+#   • Epsilon-lexicographic aggregation inside four concept blocks
+#     (strict hierarchy, ties broken with ε-radix weights)
+#   • Seasonality block: weighted avg or OWA (unchanged)
+#   • Classic OWA across the six concept scores (unchanged)
+#   • Diagnostics + three graphics (A, B, C) – Plot C updated for ε-method
+#
+# ------------------------------------------------------------------------------
 
 from __future__ import annotations
-
-import numpy as np
+import numpy  as np
 import pandas as pd
 from pathlib import Path
-
+from typing import Dict, Sequence, Iterable, Set, Tuple
+from collections import defaultdict
+import matplotlib.pyplot as plt
 
 # -------------------------------------------------------------------
-# 1. Helper utilities
+# 1. Generic helpers (OWA) – unchanged
 # -------------------------------------------------------------------
 
 def owa_weights(n: int, orness: float) -> np.ndarray:
-    """
-    Build an OWA weight vector of length *n* that achieves the requested orness
-    using Yager’s power-quantifier method (Q(x) = x**a).
-
-    orness = 1 → behaves like Max,  0.5 → arithmetic mean,  0 → Min.
-    """
-    if orness <= 0.0:                     # pure Min
-        w = np.zeros(n)
-        w[-1] = 1.0
-        return w
-    if orness >= 1.0:                     # pure Max
-        w = np.zeros(n)
-        w[0] = 1.0
-        return w
-
-    # Solve for exponent a:  orness = 2 / (a + 2)
-    a = max(1e-6, (2.0 / orness) - 2.0)
+    if orness <= 0.0:                     # Min
+        w = np.zeros(n); w[-1] = 1.0; return w
+    if orness >= 1.0:                     # Max
+        w = np.zeros(n); w[0]  = 1.0; return w
+    a   = max(1e-6, (2.0 / orness) - 2.0)          # Yager quantifier
     idx = np.arange(1, n + 1)
-    w = (idx / n) ** a - ((idx - 1) / n) ** a
+    w   = (idx / n) ** a - ((idx - 1) / n) ** a
     return w / w.sum()
 
-
 def owa(values: np.ndarray, orness: float) -> float:
-    """Ordered Weighted Averaging aggregation of a 1-D array."""
     w = owa_weights(len(values), orness)
-    ordered = np.sort(values)[::-1]       # descending
-    return float(np.dot(ordered, w))
-
-
-def loowa(block_vals: np.ndarray) -> float:
-    """
-    Lexicographic-Ordinal OWA for a single block already sorted by priority
-    (index 0 = highest priority).
-
-    Implements (Yager 2010):
-        T_j = min_{k<j} v_k
-        LOOWA(v) = max_j  min(v_j, T_j)
-    """
-    current_min = 1.0
-    best = 0.0
-    for v in block_vals:
-        candidate = min(v, current_min)
-        best = max(best, candidate)
-        current_min = min(current_min, v)
-    return best
-
+    return float(np.dot(np.sort(values)[::-1], w))
 
 # -------------------------------------------------------------------
-# 2. Configuration (edit to taste)
+# 2.  ε-lexicographic aggregation inside a block
 # -------------------------------------------------------------------
 
-DEFAULT_CONFIG: dict = {
-    # Column groups in priority order
+# ==== Δ 2025-06-18 epsilon-lexicographic update ====
+def epsilon_lexico_block(
+    block_df : pd.DataFrame,
+    eps_base : float  = 1e-3,
+    tie_tol  : float  = 1e-6,
+) -> pd.Series:
+    """
+    Return a Series with the ε-lexicographic score of *every* alternative in
+    `block_df` (columns are already in priority order).
+
+    • If an alternative’s first component is unique → score = C1
+    • If it is tied              → score = C1 + Σ Cj · (eps_base**(j-1))/2
+    """
+    first = block_df.iloc[:, 0]
+    alts  = block_df.index
+    scores = pd.Series(index=alts, dtype=float)
+
+    # group rows that tie on the first priority value
+    processed: set[str] = set()
+    for alt in alts:
+        if alt in processed:
+            continue
+        val0 = first.at[alt]
+        mask = np.isclose(first.values, val0, atol=tie_tol)
+        group = first.index[mask]
+
+        group_size = len(group)
+        for g in group:
+            vals  = block_df.loc[g].to_numpy(float)
+            score = vals[0]
+            if group_size > 1:                           # resolve the tie
+                for j in range(1, len(vals)):
+                    score += vals[j] * ((eps_base ** j) / 2.0)
+            scores.at[g] = score
+        processed.update(group)
+
+    return scores
+# -------------------------------------------------------------------
+
+# -------------------------------------------------------------------
+# 3. Configuration
+# -------------------------------------------------------------------
+
+DEFAULT_CONFIG: Dict = {
+    # priority lists -------------------------------------------------
     "size_cols": [
         "Size_small", "Size_mid_small", "Size_medium",
         "Size_mid_large", "Size_large",
@@ -87,97 +99,97 @@ DEFAULT_CONFIG: dict = {
     "closeness_cols": [
         "Closeness_close", "Closeness_mid_close", "Closeness_mid",
         "Closeness_mid_far", "Closeness_far",
-    ],  # priority: close ≫ far
+    ],
 
-    # Seasonality
+    # Seasonality ----------------------------------------------------
     "seasonality_cols": ["winter-like", "summer-like", "is-like"],
     "seasonality_method": "weighted_avg",        # or "owa"
-    "seasonality_weights": [0.4, 0.4, 0.2],      # used if weighted_avg
-    "seasonality_orness": 0.5,                   # used if OWA
+    "seasonality_weights": [0.4, 0.4, 0.2],
+    "seasonality_orness": 0.5,
 
-    # Outer aggregation
-    "outer_orness": 0.5,        # 0.5 = neutral; >0.5 optimistic; <0.5 pessimistic
+    # Outer aggregation ---------------------------------------------
+    "outer_orness": 0.5,
+
+    # ε-lexicographic parameters ------------------------------------
+    "eps_base": 1e-3,
+    "tie_tol":  1e-6,
 }
 
-
 # -------------------------------------------------------------------
-# 3. Core pipeline functions
+# 4.  Core aggregation pipeline  (index bug fixed)
 # -------------------------------------------------------------------
-
-def aggregate_matrix(
-    csv_path: str | Path,
-    cfg: dict | None = None,
-) -> pd.DataFrame:
+def aggregate_matrix(csv_path: str | Path, cfg: Dict | None = None) -> pd.DataFrame:
     """
-    Returns a DataFrame with intermediate concept scores and the final Global
-    score for every alternative in the decision matrix.
+    Read the expanded decision‐matrix CSV and return a DataFrame whose rows are
+    the alternatives and whose columns are the six concept scores **plus** the
+    global OWA score.  Now uses the ‘Alternative’ column as the index
+    throughout, so look-ups never fail.
     """
     cfg = {**DEFAULT_CONFIG, **(cfg or {})}
-    df = pd.read_csv(csv_path).round(3)   
 
-    # Quick header check
-    all_needed = (
-        ["Alternative", "Highest Concurrency"]
-        + cfg["size_cols"]
-        + cfg["risk_cols"]
-        + cfg["env_cols"]
-        + cfg["closeness_cols"]
-        + cfg["seasonality_cols"]
-    )
-    missing = [c for c in all_needed if c not in df.columns]
-    if missing:
-        raise ValueError(f"CSV is missing columns: {missing}")
+    # -------- read & freeze Alternative as index --------
+    df      = pd.read_csv(csv_path).round(6)
+    df_idx  = df.set_index("Alternative")          # <- crucial fix
 
-    records: list[dict] = []
+    # -------- ε-lexicographic scores per block ---------
+    size_scores  = epsilon_lexico_block(df_idx[cfg["size_cols"]],
+                                        cfg["eps_base"], cfg["tie_tol"])
+    risk_scores  = epsilon_lexico_block(df_idx[cfg["risk_cols"]],
+                                        cfg["eps_base"], cfg["tie_tol"])
+    env_scores   = epsilon_lexico_block(df_idx[cfg["env_cols"]],
+                                        cfg["eps_base"], cfg["tie_tol"])
+    close_scores = epsilon_lexico_block(df_idx[cfg["closeness_cols"]],
+                                        cfg["eps_base"], cfg["tie_tol"])
 
-    for _, row in df.iterrows():
-        # --- LOOWA within blocks ---
-        size_score = loowa(row[cfg["size_cols"]].to_numpy(float))
-        risk_score = loowa(row[cfg["risk_cols"]].to_numpy(float))
-        env_score  = loowa(row[cfg["env_cols"]].to_numpy(float))
-        close_score = loowa(row[cfg["closeness_cols"]].to_numpy(float))
+    # -------- Seasonality block (unchanged logic) -------
+    if cfg["seasonality_method"] == "weighted_avg":
+        w = np.asarray(cfg["seasonality_weights"], float)
+        season_scores = pd.Series(
+            df_idx[cfg["seasonality_cols"]].to_numpy(float) @ (w / w.sum()),
+            index=df_idx.index,
+        )
+    else:
+        season_scores = pd.Series(
+            np.apply_along_axis(
+                owa, 1,
+                df_idx[cfg["seasonality_cols"]].to_numpy(float),
+                cfg["seasonality_orness"],
+            ),
+            index=df_idx.index,
+        )
 
-        # --- Seasonality block ---
-        season_vals = row[cfg["seasonality_cols"]].to_numpy(float)
-        if cfg["seasonality_method"] == "weighted_avg":
-            w = np.asarray(cfg["seasonality_weights"], float)
-            season_score = float(np.dot(season_vals, w / w.sum()))
-        else:  # OWA
-            season_score = owa(season_vals, cfg["seasonality_orness"])
-
-        # --- Vector of concept scores ---
-        concept_vector = np.array([
-            float(row["Highest Concurrency"]),
-            size_score,
-            risk_score,
-            env_score,
-            close_score,
-            season_score,
+    # -------- fuse the six concept scores ---------------
+    records = []
+    for alt, row in df_idx.iterrows():
+        concept_vec = np.array([
+            row["Highest Concurrency"],
+            size_scores.at[alt],
+            risk_scores.at[alt],
+            env_scores.at[alt],
+            close_scores.at[alt],
+            season_scores.at[alt],
         ])
-
-        global_score = owa(concept_vector, cfg["outer_orness"])
-
         records.append({
-            "Alternative": row["Alternative"],
+            "Alternative": alt,
             "Concurrency": row["Highest Concurrency"],
-            "Size": size_score,
-            "Risk": risk_score,
-            "EnvImpact": env_score,
-            "Closeness": close_score,
-            "Seasonality": season_score,
-            "Global": global_score,
+            "Size":        size_scores.at[alt],
+            "Risk":        risk_scores.at[alt],
+            "EnvImpact":   env_scores.at[alt],
+            "Closeness":   close_scores.at[alt],
+            "Seasonality": season_scores.at[alt],
+            "Global":      owa(concept_vec, cfg["outer_orness"]),
         })
 
-    out = (
+    return (
         pd.DataFrame(records)
-        .set_index("Alternative")
-        .sort_values("Global", ascending=False)
+          .set_index("Alternative")
+          .sort_values("Global", ascending=False)
     )
-    return out
+
 
 
 # -------------------------------------------------------------------
-# 4. Diagnostics
+# 5. Diagnostics
 # -------------------------------------------------------------------
 
 def sensitivity_analysis(
@@ -244,7 +256,7 @@ def monotonicity_check(
     return msgs
 
 # -------------------------------------------------------------------
-# 4-bis.  Orness sweep – find every winner over [0, 1]
+# 5-bis.  Orness sweep – find every winner over [0, 1]
 # -------------------------------------------------------------------
 from collections import defaultdict
 from typing import Iterable, Tuple, Set, Dict
@@ -579,115 +591,89 @@ def plot_concept_profiles_pretty(
 
 
 
-# ================================================================
-# PLOT  C (v2) — heat-map of LOOWA tie depth for *all* alternatives
-# ================================================================
+# -------------------------------------------------------------------
+# Plot C – lexicographic tie depth **across alternatives**
+# -------------------------------------------------------------------
+# ==== Δ 2025-06-18 epsilon-lexicographic update ====
+def _tie_depth_across(df_block: pd.DataFrame, alt: str, tie_tol: float) -> int:
+    """
+    Number of priority levels needed to uniquely identify `alt`
+    against *all other* rows in `df_block`.
+    """
+    mask = np.ones(len(df_block), dtype=bool)
+    depth = 0
+    for j, col in enumerate(df_block.columns, start=1):
+        mask &= np.isclose(df_block[col], df_block.at[alt, col], atol=tie_tol)
+        if mask.sum() == 1:          # uniqueness reached
+            depth = j
+            break
+    return depth if depth else len(df_block.columns)
+
 def plot_lexico_ties(
     csv_path: str | Path,
     alternatives: Sequence[str] | None = None,
     cfg: Dict | None = None,
-    tie_tol: float = 1e-6,
-    sort_by: str = "alpha",          # "alpha" | "depth" | "global"
-    outer_orness_for_sort: float = 0.5,
+    sort_by: str = "depth",
 ) -> None:
     """
-    Heat-map where each cell shows how many priority levels LOOWA inspected
-    (tie depth) before a difference appeared inside the block.
-
-    Parameters
-    ----------
-    csv_path : path-like
-        Normalised decision matrix.
-    alternatives : None | list of str
-        • None  → include *all* alternatives in the file.  
-        • list  → restrict to those rows (old behaviour).
-    cfg : dict, optional
-        Custom configuration overriding DEFAULT_CONFIG.
-    tie_tol : float
-        Two scores are considered tied if |v1 − v2| ≤ tie_tol.
-    sort_by : str
-        "alpha"  → alphabetical alt ID (default);  
-        "depth"  → descending total tie depth;  
-        "global" → descending global score at `outer_orness_for_sort`.
-    outer_orness_for_sort : float
-        Only used when sort_by == "global".
+    Heat-map: each cell shows how many criteria were *actually needed* to break
+    the tie in that block for each alternative (1 = unique on C1, … 5 = full tie).
     """
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
+    cfg = {**DEFAULT_CONFIG, **(cfg or {})}
+    df  = pd.read_csv(csv_path).set_index("Alternative").round(6)
 
-    cfg_local = {**DEFAULT_CONFIG, **(cfg or {})}
-    df_raw    = pd.read_csv(csv_path).set_index("Alternative").round(3)   
-
-    # ---------- figure out which alternatives to display ----------
     if alternatives is None:
-        alts = df_raw.index.tolist()
-    else:
-        alts = list(alternatives)
+        alternatives = list(df.index)
 
-    # ---------- helper: how deep did we look? ----------
-    def depth(row, cols):
-        vals = row[cols].to_numpy(float)
-        for i in range(1, len(vals)):
-            if abs(vals[i] - vals[0]) > tie_tol:
-                return i
-        return len(vals)                 # fully tied
+    # table [alt × concept]
+    depth_tbl = pd.DataFrame(0, index=alternatives,
+                             columns=["Concurrency","Size","Risk","Env","Close","Season"],
+                             dtype=int)
 
-    concept_cols = ["Concurrency", "Size", "Risk",
-                    "EnvImpact", "Closeness", "Seasonality"]
+    # Concurrency & Seasonality are single-criterion → depth = 1 always
+    depth_tbl["Concurrency"] = 1
+    depth_tbl["Season"]      = 1
 
-    depth_tbl = pd.DataFrame(
-        0, index=alts, columns=concept_cols, dtype=int
-    )
+    depth_tbl.rename(columns={"Env":"EnvImpact","Close":"Closeness"}, inplace=True)
 
-    for alt in alts:
-        r = df_raw.loc[alt]
-        depth_tbl.loc[alt, "Size"]       = depth(r, cfg_local["size_cols"])
-        depth_tbl.loc[alt, "Risk"]       = depth(r, cfg_local["risk_cols"])
-        depth_tbl.loc[alt, "EnvImpact"]  = depth(r, cfg_local["env_cols"])
-        depth_tbl.loc[alt, "Closeness"]  = depth(r, cfg_local["closeness_cols"])
-        # single-criterion blocks stay 0
+    # multi-attribute blocks
+    depth_funcs = {
+        "Size":       cfg["size_cols"],
+        "Risk":       cfg["risk_cols"],
+        "EnvImpact":  cfg["env_cols"],
+        "Closeness":  cfg["closeness_cols"],
+    }
+    for concept, cols in depth_funcs.items():
+        sub = df[cols]
+        for alt in alternatives:
+            depth_tbl.at[alt, concept] = _tie_depth_across(sub, alt, cfg["tie_tol"])
 
-    # ---------- optional sorting ----------
+    # optional ordering
     if sort_by == "depth":
-        depth_tbl["__sum"] = depth_tbl.sum(axis=1)
-        depth_tbl = depth_tbl.sort_values("__sum", ascending=False).drop("__sum", axis=1)
-    elif sort_by == "global":
-        cfg_tmp = {**cfg_local, "outer_orness": outer_orness_for_sort}
-        global_scores = aggregate_matrix(csv_path, cfg_tmp)["Global"]
-        depth_tbl["__g"] = global_scores
-        depth_tbl = depth_tbl.sort_values("__g", ascending=False).drop("__g", axis=1)
-    else:  # alphabetical
+        depth_tbl = depth_tbl.loc[depth_tbl.sum(axis=1).sort_values(ascending=False).index]
+    else:
         depth_tbl = depth_tbl.sort_index()
 
-    # ---------- heat-map ----------
-    cmap = plt.cm.get_cmap("Reds", depth_tbl.values.max() + 1)
-    h   = 0.3 * len(depth_tbl) + 3
-    fig, ax = plt.subplots(figsize=(9, h))
+    # ---- heat-map -------------------------------------------------
+    vmax = depth_tbl.values.max()
+    cmap = plt.cm.get_cmap("Blues", vmax+1)
+    fig, ax = plt.subplots(figsize=(9, 0.35*len(depth_tbl)+3))
+    im = ax.imshow(depth_tbl, cmap=cmap, vmin=1, vmax=vmax)
 
-    im = ax.imshow(depth_tbl, cmap=cmap, vmin=0, vmax=depth_tbl.values.max())
+    for i, alt in enumerate(depth_tbl.index):
+        for j, conc in enumerate(depth_tbl.columns):
+            ax.text(j, i, depth_tbl.iat[i,j], ha="center", va="center", fontsize=9)
 
-    # annotate each cell
-    for i in range(len(depth_tbl)):
-        for j in range(len(concept_cols)):
-            v = depth_tbl.iat[i, j]
-            txt = "—" if v == 0 else str(v)
-            ax.text(j, i, txt, ha="center", va="center", fontsize=9)
-
-    ax.set_xticks(np.arange(len(concept_cols)))
-    ax.set_xticklabels(concept_cols, rotation=25, ha="right")
-    ax.set_yticks(np.arange(len(depth_tbl)))
+    ax.set_xticks(range(len(depth_tbl.columns)))
+    ax.set_xticklabels(depth_tbl.columns, rotation=25, ha="right")
+    ax.set_yticks(range(len(depth_tbl)))
     ax.set_yticklabels(depth_tbl.index)
-
-    cbar = fig.colorbar(
-        im, ax=ax, shrink=0.8, pad=0.02,
-        ticks=range(0, depth_tbl.values.max() + 1)
-    )
-    cbar.set_label("tie depth (number of columns consulted)")
-
-    ax.set_title("LOOWA lexicographic tie depth across all alternatives")
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+    cbar.set_label("criteria consulted to resolve tie")
+    ax.set_title("ε-Lexicographic tie depth per concept")
     plt.tight_layout()
     plt.show()
+
 
 
 
@@ -734,38 +720,36 @@ def main() -> None:
         print("\nSanity checks passed ✅")
 
 
+
 if __name__ == "__main__":
-    #main()
+    import matplotlib.pyplot as plt
 
+    # Path to the (already expanded) decision matrix
+    csv_path = "decision_matrix_expanded.csv"
 
-    # #4 Bis:----------------------------------------
-    # csv_path = "decision_matrix_expanded.csv"
+    # ------------------------------------------------------------
+    # 1)  Sweep orness α ∈ [0,1] and find the winner set
+    # ------------------------------------------------------------
+    winners, alpha_map = sweep_orness_winners(csv_path, return_mapping=True)
+    print("Overall winner pool:", winners)
+    for alt, alphas in alpha_map.items():
+        print(f"{alt} wins for α in {sorted(alphas)}")
 
-    # # --- get just the set of winners across all alpha ---
-    # winners, _ = sweep_orness_winners(csv_path)
-    # print("Overall winner pool:", winners)
-
-    # # --- or, get the alpha-by-winner mapping as well ---
-    # winners, alpha_map = sweep_orness_winners(csv_path, return_mapping=True)
-    # print("\nWinner pool:", winners)
-    # for alt, alphas in alpha_map.items():
-    #     print(f"{alt} wins for alpha in {sorted(alphas)}")
-
-
-    #4 Ter:-----------------------------------------
-
-    csv = "decision_matrix_expanded.csv"
-
-    # pool you reported:
-    winners = {"T1_D700_S33", "T3_D700_S73", "T3_D700_S33"}
-
-    # # 1.  Four-panel winner-region diagram
-    # plot_winner_regions_four(csv, winners, outer_orness_grid=101)
-
-    # plt.show()
-    # # 2.  Concept bar chart with tie indicators
-    # plot_concept_profiles_pretty(csv, sorted(winners), outer_orness=0.5)
-    
-    # plt.show()
-    plot_lexico_ties(csv)
+    # ------------------------------------------------------------
+    # 2)  Four-panel diagram of winner regions over (α, alternative)
+    # ------------------------------------------------------------
+    plot_winner_regions_four(csv_path, winners, outer_orness_grid=101)
     plt.show()
+
+    # ------------------------------------------------------------
+    # 3)  Concept-profile bar chart with ★ tie indicators (α = 0.5)
+    # ------------------------------------------------------------
+    plot_concept_profiles_pretty(csv_path, sorted(winners), outer_orness=0.5)
+    plt.show()
+
+    # ------------------------------------------------------------
+    # 4)  Heat-map of ε-lexicographic tie depth inside each block
+    # ------------------------------------------------------------
+    plot_lexico_ties(csv_path)
+    plt.show()
+
