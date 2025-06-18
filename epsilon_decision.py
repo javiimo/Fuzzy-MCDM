@@ -415,7 +415,7 @@ def plot_winner_regions_four(
     handles = [plt.Line2D([0], [0], color=colours[a], lw=3) for a in colours]
     fig.legend(handles, list(colours.keys()),
                ncol=min(6, len(colours)), loc="upper center",
-               bbox_to_anchor=(0.5, 0.98))
+               bbox_to_anchor=(0.5, 0.96))
     fig.suptitle("Winning solutions as orness varies\n(four seasonality preferences)",
                  fontsize=13, y=0.995)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
