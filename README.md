@@ -7,7 +7,7 @@ This repository contains the full implementation of a fuzzy multi-criteria decis
 
 The core of this project is to provide a transparent and justifiable framework for a decision-maker to select the best maintenance schedule from a pool of highly competitive alternatives, considering a wide range of conflicting and imprecise criteria.
 
-> 🔗 **This work is part of a broader academic thesis, which can be found here:** [**TFG-Math-UV/Fuzzy-MCDM**](https://github.com/javiimo/TFG-Math-UV)
+> 🔗 **This work is part of a broader academic work, which can be found here:** [**TFG-Math-UV/Fuzzy-MCDM**](https://github.com/javiimo/TFG-Math-UV)
 
 ---
 
@@ -39,7 +39,7 @@ The core of this project is to provide a transparent and justifiable framework f
 
 ---
 
-## 🚀 Project Overview
+## 🔍 Project Overview
 
 Preventive maintenance on a power grid is a double-edged sword: while essential for long-term reliability, taking a power line out of service temporarily weakens the network. This project tackles the complex optimization problem of scheduling these maintenance tasks over a year.
 
@@ -221,7 +221,7 @@ The scripts should be run in the following order to reproduce the analysis:
 
 ### External Links
 
--   **Thesis:** [A Fuzzy Multi-Criteria Decision-Making Analysis](https://github.com/javiimo/TFG-Math-UV)
+-   **Complete Academic Work:** [A Fuzzy Multi-Criteria Decision-Making Analysis](https://github.com/javiimo/TFG-Math-UV)
 -   **Challenge Instances:** [ROADEF/EURO 2020 Instances](https://roadef.org/challenge/2020/en/instances.php)
 -   **Team 1 Solver:** [mbmv7/rc](https://github.com/mbmv7/rc)
 -   **Team 3 Solver:** [FranciscoParrenoTorres/Roadef2020](https://github.com/FranciscoParrenoTorres/Roadef2020)
