@@ -9,7 +9,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import skfuzzy as fuzz
-from sklearn.cluster import KMeans # Keep for reference or other potential uses
 from fuzzy_var import tconorm_aggregate
 
 
