@@ -778,45 +778,6 @@ class Solution:
 
         return scores
 
-    # def _compute_entropy_score_from_mass(self, mass_dict: Dict[str, np.ndarray]) -> Dict[str, float]:
-    #     """
-    #     Uniformity score based on Jensen-Shannon divergence.
-
-    #         JS(p || u) = ½·KL(p || m) + ½·KL(u || m),   m = ½(p + u)
-    #         score      = 1 - JS(p || u) / ln(2)
-
-    #     • u is the uniform distribution over the *full* vector length T.
-    #     • score ∈ [0, 1]      (natural logs ⇒ JS ≤ ln 2)
-    #         - 1 → perfectly uniform (or all-zero) vector
-    #         - 0 → Dirac vector (all mass in one day)
-    #     """
-    #     ln2 = math.log(2.0)
-    #     scores: Dict[str, float] = {}
-
-    #     for term, vec in mass_dict.items():
-    #         T = len(vec)
-    #         if T <= 1:
-    #             scores[term] = 1.0
-    #             continue
-
-    #         total = vec.sum()
-    #         if total == 0:                   # all-zero vector → treat as uniform
-    #             scores[term] = 1.0
-    #             continue
-
-    #         p = vec / total
-    #         u = np.full(T, 1.0 / T)          # fixed uniform reference
-    #         m = 0.5 * (p + u)
-
-    #         # KL divergences, skipping 0·log0 terms
-    #         kl_pm = np.where(p > 0, p * np.log(p / m), 0.0).sum()
-    #         kl_um = (u * np.log(u / m)).sum()          # u has no zeros
-
-    #         js = 0.5 * (kl_pm + kl_um)
-    #         scores[term] = max(0.0, 1.0 - js / ln2)    # numerical safety
-
-    #     return scores
-
     def dist_matrix_to_closeness_concurrency(self, dist_mat: Dict[str, 'pd.DataFrame']) -> None:  
         """Use self.concurrent_interventions together with the dictionary of distance matrices (intervention-intervention) where each matrix corresponds to the membership values to "close", "mid-close", "mid", "mid-far", "far" (values are these strings, keys are the dataframes that correspond to the matrices) 
         For each day, take the submatrix containing only the rows and columns corresponding to the intervetions of that day.
